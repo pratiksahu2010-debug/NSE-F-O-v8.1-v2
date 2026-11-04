@@ -1,4 +1,4 @@
-"""Remote Turso persistence. No local SQLite or PostgreSQL fallback is permitted."""
+"""PostgreSQL persistence (psycopg 3). No local-file fallback: production requires DATABASE_URL."""
 import json
 import logging
 import threading
@@ -37,21 +37,28 @@ CREATE INDEX IF NOT EXISTS ix_upd_sig ON signal_updates(signal_id);
 
 
 class DB:
-    """Durable remote Turso storage. Local database fallback is intentionally unsupported."""
+    """Durable PostgreSQL storage (Render Postgres, Neon, Supabase, ...).
+
+    SQL in this module is written with ``?`` placeholders; they are translated to psycopg's ``%s`` here, so the
+    unit tests can still inject an in-memory SQLite connection (``connection=``) and run the same statements.
+    """
 
     def __init__(self, path: str = None, url: str = None, connection=None, initialize_schema: bool = True):
+        # `path` is kept for older tools: a postgres:// value is treated as the URL, anything else is ignored.
+        if path and not url and str(path).startswith(("postgres://", "postgresql://")):
+            url = path
         self.lock = threading.RLock()
         self.conn = connection
-        self._url = url or cfg.TURSO_DATABASE_URL
-        self._auth_token = cfg.TURSO_AUTH_TOKEN
+        self._url = self._normalize_url(url or cfg.DATABASE_URL)
         self._test_injected = connection is not None
         if self.conn is None:
-            if not self._url or not self._auth_token:
+            if not self._url:
                 raise RuntimeError(
-                    "Turso database is required. Set TURSO_DATABASE_URL and TURSO_AUTH_TOKEN in the service environment."
+                    "PostgreSQL database is required. Set DATABASE_URL in the service environment "
+                    "(on Render: attach a Postgres database and copy its Internal Database URL)."
                 )
             try:
-                self.conn = self._new_turso_connection()
+                self.conn = self._new_connection()
                 probe = self._exec("SELECT 1")
                 try:
                     probe.fetchone()
@@ -63,11 +70,14 @@ class DB:
             except Exception as exc:
                 self._close_connection()
                 raise RuntimeError(
-                    f"Unable to connect to the configured Turso database: {type(exc).__name__}: {exc}"
+                    f"Unable to connect to the configured PostgreSQL database: {type(exc).__name__}: {exc}"
                 ) from exc
 
         if initialize_schema:
-            schema = SCHEMA.format(PK="INTEGER PRIMARY KEY AUTOINCREMENT", REAL="REAL")
+            if self._test_injected:
+                schema = SCHEMA.format(PK="INTEGER PRIMARY KEY AUTOINCREMENT", REAL="REAL")
+            else:
+                schema = SCHEMA.format(PK="BIGSERIAL PRIMARY KEY", REAL="DOUBLE PRECISION")
             with self.lock:
                 for stmt in [part.strip() for part in schema.split(";") if part.strip()]:
                     cursor = self._exec(stmt)
@@ -76,9 +86,31 @@ class DB:
                         close()
                 self.conn.commit()
 
-    def _new_turso_connection(self):
-        import turso_serverless
-        return turso_serverless.connect(self._url, auth_token=self._auth_token)
+    # ---- connection management ----
+    @staticmethod
+    def _normalize_url(url: Optional[str]) -> str:
+        """Render/Heroku hand out ``postgres://``; libpq accepts both, but SQLAlchemy-style prefixes are not valid."""
+        url = (url or "").strip()
+        if url.startswith("postgres://"):
+            url = "postgresql://" + url[len("postgres://"):]
+        for prefix in ("postgresql+psycopg://", "postgresql+psycopg2://"):
+            if url.startswith(prefix):
+                url = "postgresql://" + url[len(prefix):]
+        return url
+
+    def _new_connection(self):
+        import psycopg
+        from psycopg.rows import dict_row
+        kwargs = dict(
+            row_factory=dict_row,
+            autocommit=False,
+            connect_timeout=int(cfg.DB_CONNECT_TIMEOUT),
+            application_name="nse-fno-bot",
+            keepalives=1, keepalives_idle=30, keepalives_interval=10, keepalives_count=3,
+        )
+        if int(cfg.DB_STATEMENT_TIMEOUT_MS) > 0:  # set to 0 for poolers (e.g. Neon/pgbouncer) that reject startup options
+            kwargs["options"] = f"-c statement_timeout={int(cfg.DB_STATEMENT_TIMEOUT_MS)}"
+        return psycopg.connect(self._url, **kwargs)
 
     def _close_connection(self):
         old, self.conn = self.conn, None
@@ -86,24 +118,33 @@ class DB:
             try:
                 old.close()
             except Exception:
-                log.debug("Ignoring error while closing stale Turso connection", exc_info=True)
+                log.debug("Ignoring error while closing stale database connection", exc_info=True)
 
     @staticmethod
-    def _is_stale_stream_error(exc: Exception) -> bool:
-        """Only retry the explicit libSQL/Turso missing-stream response, never generic 404s."""
-        message = str(exc).lower()
-        return "stream not found" in message and ("404" in message or "http status" in message)
+    def _is_connection_error(exc: Exception) -> bool:
+        """True only for dropped/broken PostgreSQL connections (idle timeout, restart, failover); never for SQL errors."""
+        for cls in type(exc).__mro__:
+            if cls.__module__.startswith("psycopg") and cls.__name__ in ("OperationalError", "InterfaceError"):
+                return True
+        return False
 
     def _reconnect(self):
-        """Replace a stale HTTP stream with a brand-new authenticated Turso client."""
+        """Replace a dead connection with a brand-new one."""
         if self._test_injected:
             raise RuntimeError("Cannot reconnect an explicitly injected test database connection")
         self._close_connection()
-        self.conn = self._new_turso_connection()
-        log.warning("Turso stale stream detected; established a fresh database connection")
+        self.conn = self._new_connection()
+        log.warning("Database connection was lost; established a fresh PostgreSQL connection")
+
+    def _rollback(self):
+        try:
+            if self.conn is not None:
+                self.conn.rollback()
+        except Exception:
+            log.debug("rollback failed", exc_info=True)
 
     def close(self):
-        """Close the remote database client cleanly during process shutdown."""
+        """Close the database connection cleanly during process shutdown."""
         with self.lock:
             if self.conn is not None:
                 try:
@@ -113,11 +154,17 @@ class DB:
 
     @property
     def backend(self) -> str:
-        return "test-injected" if self._test_injected else "turso"
+        return "test-injected" if self._test_injected else "postgres"
 
     # ---- DB-API plumbing ----
+    def _adapt(self, sql: str) -> str:
+        if self._test_injected:
+            return sql
+        # psycopg uses %s placeholders and treats a bare % as one, so literal % (LIKE 'alert:%') must be doubled.
+        return sql.replace("%", "%%").replace("?", "%s")
+
     def _exec(self, sql: str, args=()):
-        return self.conn.execute(sql, tuple(args or ()))
+        return self.conn.execute(self._adapt(sql), tuple(args or ()))
 
     @staticmethod
     def _mapping_rows(cursor, rows):
@@ -140,7 +187,9 @@ class DB:
         with self.lock:
             for attempt in range(2):
                 if self.conn is None:
-                    raise RuntimeError("Turso database connection is closed")
+                    if self._test_injected:
+                        raise RuntimeError("Database connection is closed")
+                    self._reconnect()
                 cursor = None
                 try:
                     cursor = self._exec(sql, args)
@@ -148,8 +197,9 @@ class DB:
                     self.conn.commit()
                     return rows
                 except Exception as exc:
-                    if attempt == 0 and not self._test_injected and self._is_stale_stream_error(exc):
-                        log.warning("Turso returned a missing stream for SQL operation; reconnecting and retrying once")
+                    self._rollback()  # a failed statement leaves PostgreSQL's transaction aborted
+                    if attempt == 0 and not self._test_injected and self._is_connection_error(exc):
+                        log.warning("Database connection error (%s); reconnecting and retrying once", type(exc).__name__)
                         self._reconnect()
                         continue
                     raise
@@ -161,7 +211,7 @@ class DB:
                                 close()
                             except Exception:
                                 log.debug("Ignoring cursor close failure", exc_info=True)
-            raise RuntimeError("Turso SQL operation exhausted its single retry")
+            raise RuntimeError("Database operation exhausted its single retry")
 
     def _many(self, sql: str, rows):
         if not rows:
@@ -169,16 +219,19 @@ class DB:
         with self.lock:
             for attempt in range(2):
                 if self.conn is None:
-                    raise RuntimeError("Turso database connection is closed")
+                    if self._test_injected:
+                        raise RuntimeError("Database connection is closed")
+                    self._reconnect()
                 cursor = None
                 try:
                     cursor = self.conn.cursor()
-                    cursor.executemany(sql, rows)
+                    cursor.executemany(self._adapt(sql), rows)
                     self.conn.commit()
                     return
                 except Exception as exc:
-                    if attempt == 0 and not self._test_injected and self._is_stale_stream_error(exc):
-                        log.warning("Turso returned a missing stream for batch insert; reconnecting and retrying once")
+                    self._rollback()
+                    if attempt == 0 and not self._test_injected and self._is_connection_error(exc):
+                        log.warning("Database connection error during batch insert; reconnecting and retrying once")
                         self._reconnect()
                         continue
                     raise
@@ -190,7 +243,7 @@ class DB:
                                 close()
                             except Exception:
                                 log.debug("Ignoring cursor close failure", exc_info=True)
-            raise RuntimeError("Turso batch operation exhausted its single retry")
+            raise RuntimeError("Database batch operation exhausted its single retry")
 
     def _x(self, sql, args=()):
         self._run(sql, args)
