@@ -60,9 +60,9 @@ def check_environment(rep: Report):
     tg_ok = bool(cfg.TELEGRAM_BOT_TOKEN and cfg.TELEGRAM_CHAT_IDS)
     rep.line(OK if tg_ok else FAIL, "Telegram token and chat IDs configured",
              "" if tg_ok else "TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_IDS missing: signals would be generated but never delivered")
-    db_ok = bool(cfg.TURSO_DATABASE_URL and cfg.TURSO_AUTH_TOKEN)
-    rep.line(OK if db_ok else WARN, "Turso variables configured",
-             "" if db_ok else "the bot refuses to start without TURSO_DATABASE_URL and TURSO_AUTH_TOKEN")
+    db_ok = bool(cfg.DATABASE_URL)
+    rep.line(OK if db_ok else WARN, "DATABASE_URL configured",
+             "" if db_ok else "the bot refuses to start without DATABASE_URL (PostgreSQL)")
     rep.line(OK, f"Strategy mode {cfg.STRATEGY_MODE}",
              f"ADX>={cfg.SIMPLE_ADX_MIN:g}, RSI call {cfg.SIMPLE_RSI_CALL_MIN:g}-{cfg.SIMPLE_RSI_CALL_MAX:g}, "
              f"put {cfg.SIMPLE_RSI_PUT_MIN:g}-{cfg.SIMPLE_RSI_PUT_MAX:g}, fresh<={cfg.SIMPLE_FRESH_BARS} candles")
