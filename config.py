@@ -34,8 +34,9 @@ class Config:
     TELEGRAM_CHAT_IDS = [c.strip() for c in _env("TELEGRAM_CHAT_IDS").split(",") if c.strip()]
 
     # ---- infra ----
-    TURSO_DATABASE_URL = _env("TURSO_DATABASE_URL")  # remote Turso/libSQL database URL
-    TURSO_AUTH_TOKEN = _env("TURSO_AUTH_TOKEN")        # private database auth token
+    DATABASE_URL = _env("DATABASE_URL")              # PostgreSQL connection string (Render: Internal Database URL)
+    DB_CONNECT_TIMEOUT = _env("DB_CONNECT_TIMEOUT", 10, int)            # seconds
+    DB_STATEMENT_TIMEOUT_MS = _env("DB_STATEMENT_TIMEOUT_MS", 30000, int)  # server-side per-statement cap
     CRON_SECRET = _env("CRON_SECRET")              # protects /cron/* and /status
     WEBHOOK_SECRET = _env("WEBHOOK_SECRET")        # path secret for /webhook/upstox-token/<secret> (falls back to CRON_SECRET)
     RUN_LOOP = _env("RUN_LOOP", True, _bool)       # false = purely cron-driven (/cron/tick does the work)
