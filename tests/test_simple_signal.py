@@ -229,7 +229,7 @@ class TestFailureVisibility(unittest.TestCase):
         import bot as botmod
         b = botmod.Bot.__new__(botmod.Bot)
         b.tg = MagicMock()
-        b._alert_failure("bootstrap", "Daily bootstrap failed", RuntimeError("Turso <down> & out"))
+        b._alert_failure("bootstrap", "Daily bootstrap failed", RuntimeError("PostgreSQL <down> & out"))
         b._alert_failure("bootstrap", "Daily bootstrap failed", RuntimeError("again"))
         self.assertEqual(b.tg.send.call_count, 1)
         text = b.tg.send.call_args[0][0]
@@ -242,8 +242,8 @@ class TestFailureVisibility(unittest.TestCase):
         import main as mainmod
         mainmod._STARTUP_ALERT["at"] = None
         with patch("telegram_service.Telegram") as tg_cls:
-            mainmod._alert_startup_failure(RuntimeError("Turso database is required"))
-            mainmod._alert_startup_failure(RuntimeError("Turso database is required"))
+            mainmod._alert_startup_failure(RuntimeError("PostgreSQL database is required"))
+            mainmod._alert_startup_failure(RuntimeError("PostgreSQL database is required"))
         self.assertEqual(tg_cls.return_value.send.call_count, 1)
         self.assertIn("failed to start", tg_cls.return_value.send.call_args[0][0])
 
@@ -257,7 +257,7 @@ class TestFailureVisibility(unittest.TestCase):
         timer = threading.Timer(0.3, lambda: os.kill(os.getpid(), signal.SIGINT))
         try:
             with patch.object(mainmod, "start_server", return_value=MagicMock()), \
-                    patch("bot.Bot", side_effect=RuntimeError("Turso database is required")), \
+                    patch("bot.Bot", side_effect=RuntimeError("PostgreSQL database is required")), \
                     patch.object(mainmod, "_alert_startup_failure", side_effect=lambda exc: alerted.set()) as alert:
                 timer.start()
                 mainmod.main()
