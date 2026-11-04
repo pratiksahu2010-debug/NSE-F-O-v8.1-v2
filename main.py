@@ -26,7 +26,7 @@ def _alert_startup_failure(exc, cooldown=1800.0):
         from telegram_service import Telegram
         Telegram().send(f"🛑 <b>F&amp;O bot failed to start</b>\n{html.escape(type(exc).__name__)}: "
                         f"{html.escape(str(exc)[:300])}\nRetrying every 15s. Check the Render environment "
-                        "(Turso URL/token, Upstox token) and logs.")
+                        "(DATABASE_URL, Upstox token) and logs.")
     except Exception:
         log.exception("startup failure alert could not be sent")
 
