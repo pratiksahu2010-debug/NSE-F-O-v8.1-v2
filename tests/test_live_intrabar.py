@@ -1,0 +1,228 @@
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+from engine.entry_validation import validate_entry_candidate
+from engine.live_intrabar import LiveIntrabarEngine
+from models import Underlying
+
+IST = ZoneInfo("Asia/Kolkata")
+
+
+def test_live_bar_uses_cumulative_volume_deltas_and_keeps_partial_separate():
+    engine = LiveIntrabarEngine(scan_minutes=5, stale_seconds=8)
+    now = datetime(2026, 11, 3, 10, 1, tzinfo=IST)
+    first = engine.update("ABC", 100.0, 1000.0, now)
+    second = engine.update("ABC", 101.0, 1012.0, now + timedelta(seconds=1))
+    third = engine.update("ABC", 100.5, 1019.0, now + timedelta(seconds=2))
+
+    assert first.ts == datetime(2026, 11, 3, 10, 0, tzinfo=IST)
+    assert third.o == 100.0
+    assert third.h == 101.0
+    assert third.l == 100.0
+    assert third.c == 100.5
+    assert third.v == 19.0
+    assert second.v == 12.0
+
+
+def test_live_snapshot_rejects_stale_tick():
+    engine = LiveIntrabarEngine(scan_minutes=5, stale_seconds=5)
+    now = datetime(2026, 11, 3, 10, 1, tzinfo=IST)
+    engine.update("ABC", 100.0, 100.0, now)
+    assert engine.snapshot("ABC", now + timedelta(seconds=4)) is not None
+    assert engine.snapshot("ABC", now + timedelta(seconds=6)) is None
+
+
+def test_live_intrabar_entry_validation_uses_confirmation_age_not_closed_bar_time():
+    now = datetime.now(IST)
+    partial_open = now.replace(second=0, microsecond=0)
+    setup = partial_open - timedelta(minutes=5)
+    candidate = {
+        "symbol": "ABC",
+        "strategy": "V7_SEQUENTIAL",
+        "side": "CALL",
+        "setup_time": setup.isoformat(),
+        "trigger_time": partial_open.isoformat(),
+        "confirmation_time": now.isoformat(),
+        "confirmation_price": 100.0,
+        "mode": "INTRABAR",
+    }
+    partial = type("Partial", (), {"ts": partial_open})()
+    valid, reason, _ = validate_entry_candidate(
+        candidate, partial, 100.05, 1.0, 0.4, 0.6
+    )
+    assert valid
+    assert reason == "ENTRY_VALID"
+
+
+def test_live_intrabar_engine_requires_closed_history_before_detection():
+    engine = LiveIntrabarEngine()
+    und = Underlying(name="ABC", kind="STOCK", spot_key="NSE_EQ|ABC")
+    now = datetime(2026, 11, 3, 10, 1, tzinfo=IST)
+    partial = engine.update("ABC", 100.0, 1000.0, now)
+    assert engine.detect(und, [], [], partial, now, object()) is None
+
+
+
+def test_live_option_chain_refresh_is_nonblocking_and_reuses_fresh_result():
+    from concurrent.futures import Future
+    import threading
+    from engine.scanner import Scanner
+
+    class Pool:
+        def __init__(self):
+            self.future = Future()
+            self.calls = []
+
+        def submit(self, fn, *args):
+            self.calls.append((fn, args))
+            return self.future
+
+    class Provider:
+        def call(self, *args):
+            return "fresh-chain"
+
+    scanner = Scanner.__new__(Scanner)
+    scanner._live_chain_lock = threading.Lock()
+    scanner._live_chain_cache = {}
+    scanner._live_chain_inflight = {}
+    scanner._live_chain_retry_after = {}
+    scanner._live_chain_pool = Pool()
+    scanner.fo = Provider()
+    und = Underlying(name="ABC", kind="STOCK", spot_key="NSE_EQ|ABC")
+    expiry = datetime(2026, 11, 26, tzinfo=IST).date()
+
+    # First call schedules REST work and immediately returns; it never waits.
+    assert scanner._live_option_chain(und, expiry, datetime.now(IST)) is None
+    assert len(scanner._live_chain_pool.calls) == 1
+
+    scanner._live_chain_pool.future.set_result("fresh-chain")
+    assert scanner._live_option_chain(und, expiry, datetime.now(IST)) == "fresh-chain"
+    # The just-completed result is cached for the short TTL.
+    assert scanner._live_option_chain(und, expiry, datetime.now(IST)) == "fresh-chain"
+    assert len(scanner._live_chain_pool.calls) == 1
+
+
+def test_live_option_chain_failed_refresh_is_throttled():
+    from concurrent.futures import Future
+    import threading
+    from engine.scanner import Scanner
+
+    class Pool:
+        def __init__(self):
+            self.futures = []
+
+        def submit(self, fn, *args):
+            future = Future()
+            self.futures.append(future)
+            return future
+
+    class Provider:
+        def call(self, *args):
+            raise RuntimeError("network failure")
+
+    scanner = Scanner.__new__(Scanner)
+    scanner._live_chain_lock = threading.Lock()
+    scanner._live_chain_cache = {}
+    scanner._live_chain_inflight = {}
+    scanner._live_chain_retry_after = {}
+    scanner._live_chain_pool = Pool()
+    scanner.fo = Provider()
+    und = Underlying(name="ABC", kind="STOCK", spot_key="NSE_EQ|ABC")
+    expiry = datetime(2026, 11, 26, tzinfo=IST).date()
+
+    assert scanner._live_option_chain(und, expiry, datetime.now(IST)) is None
+    scanner._live_chain_pool.futures[0].set_exception(RuntimeError("network failure"))
+    assert scanner._live_option_chain(und, expiry, datetime.now(IST)) is None
+    assert len(scanner._live_chain_pool.futures) == 1
+
+
+
+def test_live_candidate_reservation_is_released_when_symbol_lock_is_busy():
+    import threading
+    from engine.scanner import Scanner
+
+    scanner = Scanner.__new__(Scanner)
+    scanner._live_state_lock = threading.Lock()
+    key = "ABC:V7_SEQUENTIAL:CALL:setup"
+    scanner._live_inflight = {key}
+    symbol_lock = threading.Lock()
+    symbol_lock.acquire()
+    scanner._live_symbol_locks = {"ABC": symbol_lock}
+    candidate = {"setup_id": key}
+    try:
+        scanner._evaluate_live_candidate(Underlying(name="ABC", kind="STOCK", spot_key="NSE_EQ|ABC"),
+                                         candidate, {})
+        assert key not in scanner._live_inflight
+    finally:
+        symbol_lock.release()
+
+
+def test_live_option_chain_empty_result_is_throttled():
+    from concurrent.futures import Future
+    import threading
+    from engine.scanner import Scanner
+
+    class Pool:
+        def __init__(self):
+            self.future = Future()
+            self.calls = 0
+
+        def submit(self, fn, *args):
+            self.calls += 1
+            return self.future
+
+    class Provider:
+        def call(self, *args):
+            return None
+
+    scanner = Scanner.__new__(Scanner)
+    scanner._live_chain_lock = threading.Lock()
+    scanner._live_chain_cache = {}
+    scanner._live_chain_inflight = {}
+    scanner._live_chain_retry_after = {}
+    scanner._live_chain_pool = Pool()
+    scanner.fo = Provider()
+    und = Underlying(name="ABC", kind="STOCK", spot_key="NSE_EQ|ABC")
+    expiry = datetime(2026, 11, 26, tzinfo=IST).date()
+
+    assert scanner._live_option_chain(und, expiry, datetime.now(IST)) is None
+    scanner._live_chain_pool.future.set_result(None)
+    assert scanner._live_option_chain(und, expiry, datetime.now(IST)) is None
+    assert scanner._live_chain_pool.calls == 1
+
+
+def test_live_detector_reads_partial_candle_volume_from_v_field():
+    """Regression: Candle exposes volume as v, not volume."""
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    from engine import live_intrabar as live_module
+    from models import Candle
+
+    engine = LiveIntrabarEngine()
+    und = Underlying(name="ABC", kind="STOCK", spot_key="NSE_EQ|ABC")
+    now = datetime(2026, 11, 3, 13, 25, tzinfo=IST)
+    start = datetime(2026, 11, 3, 9, 15, tzinfo=IST)
+    completed = [
+        Candle(start + timedelta(minutes=5 * i), 100.0, 100.5, 99.5, 100.0, 1000.0)
+        for i in range(50)
+    ]
+    partial = Candle(now.replace(minute=now.minute - now.minute % 5), 100.0,
+                     100.5, 99.5, 100.0, 25.0)
+    cfg = SimpleNamespace(
+        V7_MIN_BARS=50, SETUP_MIN_ADX=20.0, DI_MIN_GAP=2.0,
+        MOMENTUM_ORB_ENABLED=False, MEX_ENABLED=False,
+    )
+
+    with (
+        patch.object(live_module, "ema", return_value=[100.0] * 50),
+        patch.object(live_module, "atr", return_value=[1.0] * 50),
+        patch.object(live_module, "vwap", return_value=[100.0] * 50),
+        patch.object(live_module, "adx", return_value=[(25.0, 20.0, 10.0)] * 50),
+        patch.object(live_module, "rsi", return_value=[55.0] * 50),
+    ):
+        result = engine.detect(
+            und, completed, completed, partial, now, cfg,
+            allow_sequential=False, allow_mex=False, allow_orb=False,
+        )
+
+    assert result is None

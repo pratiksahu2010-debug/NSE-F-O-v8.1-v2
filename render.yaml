@@ -1,0 +1,79 @@
+services:
+  - type: web
+    name: nse-fno-bot
+    runtime: python
+    plan: free                      # free web services sleep after 15 min without inbound traffic -> use the cron jobs in README
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    healthCheckPath: /ping
+    autoDeploy: false
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: RUN_LOOP
+        value: "true"               # scanner lifecycle is independent of /ping
+      - key: MAX_UNDERLYING_SYMBOLS
+        value: "106"               # all discovered F&O indices + 100 fixed MEX stocks (normal 50 are a subset)
+      - key: TOP_STOCKS
+        value: "50"                # compatibility only; fixed static universe is authoritative
+      - key: ALERT_SCORE_MIN
+        value: "8.0"
+      - key: PAPER_MODE
+        value: "true"
+      - key: BOT_VERSION
+        value: "nse-fno-v8.1-simple"
+      - key: STRATEGY_MODE
+        value: "SIMPLE"             # SIMPLE = EMA 9/21 + VWAP + RSI + ADX>=25 (default); LEGACY = old multi-engine stack
+      - key: SIMPLE_ADX_MIN
+        value: "25"
+      - key: CANDLE_READY_RETRIES
+        value: "4"                  # V8.1: wait for the just-closed candle instead of discarding the symbol as stale
+      - key: CANDLE_READY_WAIT_SEC
+        value: "3"
+      - key: HISTORY_BACKFILL_ENABLED
+        value: "true"               # V8.1: re-fetch missing 5m history during the scan
+      - key: CHOP_GATE_ENABLED
+        value: "true"
+      - key: ORB_ENABLED
+        value: "true"
+      - key: VWAP_SETUP_ENABLED
+        value: "true"
+      - key: SQUEEZE_ENABLED
+        value: "true"
+      - key: REVERSAL_ENABLED
+        value: "true"
+      - key: SETUP_MIN_ADX
+        value: "20"
+      - key: REVERSAL_MIN_ADX
+        value: "18"
+      - key: MOMENTUM_EXPLOSION_ENABLED
+        value: "true"
+      - key: MEX_ENABLED
+        value: "true"
+      - key: MOMENTUM_ORB_ENABLED
+        value: "true"
+      - key: MEX_ORB_SCORE_MIN
+        value: "70"
+      - key: CRON_SECRET
+        generateValue: true         # Render invents a random value; copy it into your cron job URL
+      - key: WEBHOOK_SECRET
+        generateValue: true
+      # ---- Upstox (primary) ----
+      - key: UPSTOX_ANALYTICS_TOKEN # 1-year read-only token: Upstox Developer Apps -> Analytics -> Generate
+        sync: false
+      - key: UPSTOX_API_KEY         # optional daily approve-on-phone flow (only if you have no analytics token)
+        sync: false
+      - key: UPSTOX_API_SECRET
+        sync: false
+      # ---- Telegram ----
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_IDS
+        sync: false
+      # ---- durable remote Turso storage (no local database fallback) ----
+      - key: TURSO_DATABASE_URL
+        sync: false
+      - key: TURSO_AUTH_TOKEN
+        sync: false
+      - key: DATA_DIR
+        value: /tmp/cache
