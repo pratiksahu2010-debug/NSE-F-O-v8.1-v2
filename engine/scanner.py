@@ -257,7 +257,7 @@ class Scanner:
                     self.candidate_watchlist.pop(old_key, None)
         # Production uses asynchronous persistence; injected test databases
         # retain their synchronous durability contract for deterministic fixtures.
-        if getattr(self.db, "backend", None) == "turso":
+        if getattr(self.db, "backend", None) == "postgres":
             self._schedule_candidate_watchlist_persistence()
         else:
             try:
@@ -1022,9 +1022,9 @@ class Scanner:
         }
         self.live_engine.begin_cycle()
         # Pending Telegram retries are maintenance work. In production they use
-        # a dedicated Turso client on a daemon worker, never the scan thread or
+        # a dedicated database client on a daemon worker, never the scan thread or
         # the primary DB connection/lock.
-        if getattr(self.db, "backend", None) == "turso":
+        if getattr(self.db, "backend", None) == "postgres":
             self._schedule_pending_outbox_delivery()
         else:
             # Keep deterministic behavior for injected in-memory test databases.
@@ -1117,7 +1117,7 @@ class Scanner:
             log.exception("could not persist alert de-dup key")
 
     def _maintenance_connection(self):
-        """Create one isolated Turso client shared only by background maintenance workers."""
+        """Create one isolated database client shared only by background maintenance workers."""
         with self._maintenance_db_lock:
             if self._outbox_db is None:
                 from db import DB
