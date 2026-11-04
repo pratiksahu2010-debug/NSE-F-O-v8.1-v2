@@ -98,7 +98,7 @@ class TestTokens(unittest.TestCase):
             def kv_get(self, key):
                 if key == "runtime_upstox_token" and not self.failed:
                     self.failed = True
-                    raise RuntimeError("temporary Turso outage")
+                    raise RuntimeError("temporary database outage")
                 return None
 
             def kv_set(self, key, value):
@@ -109,7 +109,7 @@ class TestTokens(unittest.TestCase):
         tm._restore_persisted()
         self._wait_restore(tm)
         self.assertFalse(tm._persist_loaded)
-        self.assertIn("temporary Turso outage", tm._persist_restore_error)
+        self.assertIn("temporary database outage", tm._persist_restore_error)
         tm._persist_retry_after = 0
         tm._restore_persisted()
         self._wait_restore(tm)
@@ -234,10 +234,16 @@ class TestMasterStreaming(unittest.TestCase):
 
 
 class TestDB(unittest.TestCase):
-    def test_missing_turso_credentials_fail_fast_without_local_fallback(self):
-        with Cfg(TURSO_DATABASE_URL="", TURSO_AUTH_TOKEN=""):
-            with self.assertRaisesRegex(RuntimeError, "TURSO_DATABASE_URL and TURSO_AUTH_TOKEN"):
+    def test_missing_database_url_fails_fast_without_local_fallback(self):
+        with Cfg(DATABASE_URL=""):
+            with self.assertRaisesRegex(RuntimeError, "DATABASE_URL"):
                 DB()
+
+    def test_url_normalization(self):
+        self.assertEqual(DB._normalize_url("postgres://u:p@h:5432/d"), "postgresql://u:p@h:5432/d")
+        self.assertEqual(DB._normalize_url("postgresql+psycopg2://u:p@h/d"), "postgresql://u:p@h/d")
+        self.assertEqual(DB._normalize_url("  postgresql://u@h/d "), "postgresql://u@h/d")
+        self.assertEqual(DB._normalize_url(None), "")
 
     def test_kv_upserts_and_signal_history(self):
         db = make_test_db()
@@ -267,105 +273,135 @@ class TestDB(unittest.TestCase):
         db.mark_telegram_delivered(pending[0]["id"])
         self.assertTrue(db.telegram_delivery_status("d1")["all_delivered"])
 
-    def test_turso_driver_receives_url_and_auth_token_and_creates_schema(self):
-        import types
-        connection = sqlite3.connect(":memory:")
-        connection.row_factory = sqlite3.Row
-        driver = types.SimpleNamespace(connect=mock.Mock(return_value=connection))
-        with Cfg(TURSO_DATABASE_URL="libsql://unit-test.turso.io", TURSO_AUTH_TOKEN="test-token"):
-            with mock.patch.dict(sys.modules, {"turso_serverless": driver}):
-                db = DB()
-        driver.connect.assert_called_once_with(
-            "libsql://unit-test.turso.io", auth_token="test-token"
-        )
-        self.assertEqual(db.backend, "turso")
-        self.assertEqual(db.kv_get("missing"), None)
-
-    def test_stale_stream_query_reconnects_and_retries_exactly_once(self):
+    # ---- PostgreSQL driver behaviour, exercised through a fake psycopg module backed by in-memory SQLite ----
+    @staticmethod
+    def _fake_psycopg(raw, connections=None):
         import types
 
-        class StreamConnection:
-            def __init__(self, raw):
+        class OperationalError(Exception):
+            pass
+        OperationalError.__module__ = "psycopg.errors"
+
+        class FakeConn:
+            """Translates psycopg's %s / %% syntax back to SQLite so the real SQL path is exercised."""
+
+            def __init__(self):
                 self.raw = raw
-                self.fail_execute = False
+                self.fail_next = False
+                self.closed = False
+                self.rollbacks = 0
+
+            @staticmethod
+            def _t(sql):
+                return sql.replace("%s", "?").replace("%%", "%")
+
+            def _maybe_fail(self):
+                if self.fail_next:
+                    self.fail_next = False
+                    raise OperationalError("server closed the connection unexpectedly")
 
             def execute(self, sql, args=()):
-                if self.fail_execute:
-                    self.fail_execute = False
-                    raise RuntimeError("HTTP status 404: stream not found: stale-query")
-                return self.raw.execute(sql, args)
-
-            def cursor(self):
-                return self.raw.cursor()
-
-            def commit(self):
-                return self.raw.commit()
-
-            def close(self):
-                # Keep the shared in-memory test database alive across reconnects.
-                pass
-
-        raw = sqlite3.connect(":memory:")
-        raw.row_factory = sqlite3.Row
-        first = StreamConnection(raw)
-        second = StreamConnection(raw)
-        driver = types.SimpleNamespace(connect=mock.Mock(side_effect=[first, second]))
-        with Cfg(TURSO_DATABASE_URL="libsql://unit-test.turso.io", TURSO_AUTH_TOKEN="test-token"):
-            with mock.patch.dict(sys.modules, {"turso_serverless": driver}):
-                db = DB()
-                first.fail_execute = True
-                db.kv_set("retry-query", "ok")
-                self.assertEqual(db.kv_get("retry-query"), "ok")
-        self.assertEqual(driver.connect.call_count, 2)
-
-    def test_stale_stream_batch_insert_reconnects_and_retries_once(self):
-        import types
-        from datetime import datetime
-        from types import SimpleNamespace
-
-        class StreamConnection:
-            def __init__(self, raw):
-                self.raw = raw
-                self.fail_batch = False
-
-            def execute(self, sql, args=()):
-                return self.raw.execute(sql, args)
+                self._maybe_fail()
+                return self.raw.execute(self._t(sql), args)
 
             def cursor(self):
                 return self
 
             def executemany(self, sql, rows):
-                if self.fail_batch:
-                    self.fail_batch = False
-                    raise RuntimeError("HTTP status 404: stream not found: stale-batch")
-                return self.raw.executemany(sql, rows)
+                self._maybe_fail()
+                return self.raw.executemany(self._t(sql), rows)
 
             def commit(self):
                 return self.raw.commit()
 
+            def rollback(self):
+                self.rollbacks += 1
+
             def close(self):
-                pass
+                self.closed = True
 
-        raw = sqlite3.connect(":memory:")
+        made = []
+
+        def connect(url, **kw):
+            conn = FakeConn()
+            made.append((url, kw, conn))
+            return conn
+
+        mod = types.ModuleType("psycopg")
+        mod.connect = connect
+        mod.OperationalError = OperationalError
+        rows = types.ModuleType("psycopg.rows")
+        rows.dict_row = object()
+        mod.rows = rows
+        return mod, rows, made
+
+    def _pg_db(self, url="postgres://user:pw@host/db"):
+        raw = sqlite3.connect(":memory:", check_same_thread=False)
         raw.row_factory = sqlite3.Row
-        first = StreamConnection(raw)
-        second = StreamConnection(raw)
-        driver = types.SimpleNamespace(connect=mock.Mock(side_effect=[first, second]))
-        with Cfg(TURSO_DATABASE_URL="libsql://unit-test.turso.io", TURSO_AUTH_TOKEN="test-token"):
-            with mock.patch.dict(sys.modules, {"turso_serverless": driver}):
+        mod, rows, made = self._fake_psycopg(raw)
+        with Cfg(DATABASE_URL=url):
+            with mock.patch.dict(sys.modules, {"psycopg": mod, "psycopg.rows": rows}):
                 db = DB()
-                first.fail_batch = True
-                candle = SimpleNamespace(
-                    ts=datetime(2026, 11, 2, 10, 0), o=100.0, h=101.0,
-                    l=99.0, c=100.5, v=1000.0, oi=10.0,
-                )
-                db.save_candles("NIFTY", [candle])
-                self.assertEqual(len(db.candles_between("NIFTY", "2026-11-02", "2026-11-02")), 1)
-        self.assertEqual(driver.connect.call_count, 2)
+        # reconnects import psycopg lazily, so keep the fake available to the caller
+        self._mods = {"psycopg": mod, "psycopg.rows": rows}
+        return db, made
 
-    def test_unrelated_http_404_is_not_retried(self):
-        self.assertFalse(DB._is_stale_stream_error(RuntimeError("HTTP status 404: table not found")))
-        self.assertTrue(DB._is_stale_stream_error(RuntimeError("HTTP status 404: stream not found: x")))
+    def test_postgres_driver_receives_normalized_url_and_creates_schema(self):
+        db, made = self._pg_db()
+        self.assertEqual(len(made), 1)
+        self.assertEqual(made[0][0], "postgresql://user:pw@host/db")
+        self.assertIn("statement_timeout", made[0][1]["options"])
+        self.assertEqual(db.backend, "postgres")
+        self.assertIsNone(db.kv_get("missing"))
+        db.kv_set("k", "v")
+        self.assertEqual(db.kv_get("k"), "v")
+
+    def test_literal_percent_in_sql_survives_placeholder_translation(self):
+        db, _ = self._pg_db()
+        db.kv_set("alert:2026-10-01:X", "1")
+        db.kv_set("alert:2026-10-30:Y", "1")
+        db.kv_set("other", "1")
+        db._x("DELETE FROM kv WHERE k LIKE 'alert:%' AND substr(k, 7, 10) < ?", ("2026-10-15",))
+        self.assertIsNone(db.kv_get("alert:2026-10-01:X"))
+        self.assertEqual(db.kv_get("alert:2026-10-30:Y"), "1")
+        self.assertEqual(db.kv_get("other"), "1")
+
+    def test_dropped_connection_query_reconnects_and_retries_exactly_once(self):
+        db, made = self._pg_db()
+        made[0][2].fail_next = True
+        with mock.patch.dict(sys.modules, self._mods):
+            db.kv_set("retry-query", "ok")
+            self.assertEqual(db.kv_get("retry-query"), "ok")
+        self.assertEqual(len(made), 2)
+        self.assertTrue(made[0][2].closed)
+
+    def test_dropped_connection_batch_insert_reconnects_and_retries_once(self):
+        from types import SimpleNamespace
+        db, made = self._pg_db()
+        made[0][2].fail_next = True
+        candle = SimpleNamespace(ts=datetime(2026, 11, 2, 10, 0), o=100.0, h=101.0,
+                                 l=99.0, c=100.5, v=1000.0, oi=10.0)
+        with mock.patch.dict(sys.modules, self._mods):
+            db.save_candles("NIFTY", [candle])
+        self.assertEqual(len(db.candles_between("NIFTY", "2026-11-02", "2026-11-02")), 1)
+        self.assertEqual(len(made), 2)
+
+    def test_sql_errors_roll_back_and_are_not_retried(self):
+        db, made = self._pg_db()
+        with self.assertRaises(Exception):
+            db._q("SELECT * FROM table_that_does_not_exist")
+        self.assertEqual(len(made), 1)
+        self.assertGreaterEqual(made[0][2].rollbacks, 1)
+        db.kv_set("still", "works")
+        self.assertEqual(db.kv_get("still"), "works")
+
+    def test_only_connection_errors_are_classified_as_retryable(self):
+        class OperationalError(Exception):
+            pass
+        OperationalError.__module__ = "psycopg.errors"
+        self.assertTrue(DB._is_connection_error(OperationalError("server closed the connection")))
+        self.assertFalse(DB._is_connection_error(RuntimeError("relation does not exist")))
+        self.assertFalse(DB._is_connection_error(sqlite3.OperationalError("no such table")))
 
 
 class Prov:
@@ -411,7 +447,7 @@ class FakeBot:
 
     def diagnostics(self):
         self.diagnostics_calls += 1
-        return {"database": {"backend": "turso", "persistent": True, "connected": True},
+        return {"database": {"backend": "postgres", "persistent": True, "connected": True},
                 "setup_modules": {"orb": False}, "universe": {"count": 1, "symbols": ["NIFTY"]},
                 "last_scan": {"symbol_diagnostics": {"NIFTY": {"stage": "stage1", "reasons": ["test"]}}}}
 
@@ -605,14 +641,14 @@ class TestAsyncCandleWriter(unittest.TestCase):
     def test_failed_write_is_reported_without_killing_writer(self):
         class FailingDB:
             def save_candles(self, symbol, candles):
-                raise OSError("simulated Turso write failure")
+                raise OSError("simulated database write failure")
 
         writer = AsyncCandleWriter(FailingDB)
         candle = Candle(datetime(2026, 11, 4, 10, 0), 100, 101, 99, 100, 1000, 10)
         writer.submit("NIFTY", [candle])
         self.assertTrue(self._wait_for(lambda: writer.snapshot()["failed"] == 1))
         state = writer.snapshot()
-        self.assertIn("simulated Turso write failure", state["last_error"]["error"])
+        self.assertIn("simulated database write failure", state["last_error"]["error"])
         writer.close(timeout=1.0)
 
     def test_successful_write_is_available_for_cache_recovery(self):
