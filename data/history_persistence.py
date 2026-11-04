@@ -1,9 +1,8 @@
 """Non-blocking, isolated persistence for historical candle warmup.
 
-The Turso Python serverless driver currently exposes no documented per-query
-or socket timeout option. Candle writes therefore run on a dedicated daemon
-worker and a separate DB connection so a stalled history write cannot hold
-the scanner's primary DB lock or block scanner construction.
+Candle writes run on a dedicated daemon worker and a separate DB connection
+so a slow or stalled history write cannot hold the scanner's primary DB lock
+or block scanner construction.
 """
 import logging
 import queue
