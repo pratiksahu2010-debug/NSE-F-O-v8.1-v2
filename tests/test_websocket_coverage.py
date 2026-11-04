@@ -188,7 +188,7 @@ def test_candidate_watch_updates_memory_without_synchronous_database_write():
     from utils.market_hours import IST
 
     class _DB:
-        backend = "turso"
+        backend = "postgres"
 
         def kv_set(self, *_args):
             raise AssertionError("production candidate watch must not write to primary DB synchronously")
