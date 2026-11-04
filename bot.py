@@ -44,13 +44,13 @@ class Bot:
     def __init__(self):
         self.tg = Telegram()
         self.db = DB()
-        # Candle archive writes use a dedicated Turso connection and daemon worker.
+        # Candle archive writes use a dedicated database connection and daemon worker.
         # A slow remote write must never hold the scanner's primary DB lock.
         self.history_writer = AsyncCandleWriter(lambda: DB(initialize_schema=False))
         self.ws = UpstoxWS()
         self.ws.on_tick = self._on_ws_tick
         tokens.alert = self.tg.send
-        # Token persistence gets its own lazy Turso client. Sharing self.db here
+        # Token persistence gets its own lazy database client. Sharing self.db here
         # would let a stalled background token read hold the primary DB lock and
         # block daily bootstrap/cache access even though restore runs in a thread.
         tokens.kv = None
@@ -236,10 +236,10 @@ class Bot:
                     self.history_bootstrap_diagnostics["active_symbols"] = active
                     self.history_bootstrap_diagnostics["last_progress_at"] = mh.now().isoformat(timespec="seconds")
 
-            _set_stage("turso_cache_read")
+            _set_stage("db_cache_read")
             try:
                 # Cache reads are synchronous. Fetched candles are queued to an
-                # isolated writer so remote Turso latency cannot block scanner startup.
+                # isolated writer so database latency cannot block scanner startup.
                 # Completed writes remain durable per-symbol checkpoints; symbols whose
                 # writes are interrupted by a process restart are fetched again next boot.
                 end_day = today - timedelta(days=1)
@@ -265,7 +265,7 @@ class Bot:
                     result = sorted(merged.values(), key=lambda c: c.ts)
                     persistence_error = None
                     if fetched:
-                        _set_stage("turso_cache_write_queue")
+                        _set_stage("db_cache_write_queue")
                         try:
                             self.history_writer.submit(u.name, fetched)
                         except Exception as exc:
@@ -275,7 +275,7 @@ class Bot:
                         log.warning("historical warmup short for %s | api=%d cached=%d total=%d required=%d",
                                     u.name, len(fetched), len(cached), len(result), hist_min_bars)
                     source = ("upstox_unpersisted" if persistence_error else "upstox_queued") if fetched else ("cache_fallback" if cached else "empty")
-                    error = persistence_error or ("Turso candle cache read failed" if cache_read_failed else None)
+                    error = persistence_error or ("database candle cache read failed" if cache_read_failed else None)
                     outcome = (u.name, result, source, error)
                     return outcome
                 except Exception as e:
@@ -316,7 +316,7 @@ class Bot:
         }
         history_results = []
         worker_count = max(1, min(2, cfg.SCAN_WORKERS))
-        log.info("history bootstrap workers started | workers=%d | symbols=%d | persistence=Turso per symbol",
+        log.info("history bootstrap workers started | workers=%d | symbols=%d | persistence=PostgreSQL per symbol",
                  worker_count, len(self.unds))
         with ThreadPoolExecutor(max_workers=worker_count) as ex:
             futures = {ex.submit(_hist, u): u.name for u in self.unds}
@@ -474,7 +474,7 @@ class Bot:
         self.boot_day = today
         self.last_scan_boundary = None
         # The online_day key only selected notification wording; it is not a trading
-        # dependency. A synchronous Turso read/write here could hold tick() in
+        # dependency. A synchronous database read/write here could hold tick() in
         # daily_bootstrap indefinitely after the scanner and websocket were ready.
         startup_message = (
             f"✅ <b>F&O bot ready</b> {today}\nUniverse: {len(indices)} indices + "
@@ -887,7 +887,7 @@ class Bot:
         return {
             "ok": True, "time": mh.now().isoformat(timespec="seconds"),
             "database": {"backend": self.db.backend, "persistent_required": True,
-                         "turso_connected": self.db.backend == "turso"},
+                         "postgres_connected": self.db.backend == "postgres"},
             "providers": self.fo.health(), "history_bootstrap": self.history_bootstrap_diagnostics,
             "universe": {"count": len(self.unds), "symbols": [u.name for u in self.unds],
                 **self.universe_diagnostics},
