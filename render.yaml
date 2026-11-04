@@ -70,10 +70,16 @@ services:
         sync: false
       - key: TELEGRAM_CHAT_IDS
         sync: false
-      # ---- durable remote Turso storage (no local database fallback) ----
-      - key: TURSO_DATABASE_URL
-        sync: false
-      - key: TURSO_AUTH_TOKEN
-        sync: false
+      # ---- durable PostgreSQL storage (no local database fallback) ----
+      - key: DATABASE_URL
+        fromDatabase:
+          name: nse-fno-db
+          property: connectionString   # internal URL; same-region only
       - key: DATA_DIR
         value: /tmp/cache
+
+databases:
+  - name: nse-fno-db
+    plan: free                         # free Render Postgres expires after a limited period -> upgrade for permanent use
+    databaseName: nse_fno
+    user: nse_fno
