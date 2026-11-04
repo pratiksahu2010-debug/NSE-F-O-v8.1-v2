@@ -1,7 +1,7 @@
 """Calibrate the live gates from the bot's OWN tracked outcomes (premium reality: ask entry, bid exit, costs).
 
-  python tools/calibrate.py            # last 45 days, uses DATABASE_URL / DB_PATH like the bot
-  python tools/calibrate.py 90 --db fno_bot.db
+  python tools/calibrate.py            # last 45 days, uses DATABASE_URL like the bot
+  python tools/calibrate.py 90 --db postgresql://user:pw@host/db
 
 Reads closed signals + the per-signal features the scanner logs (score, components, ADX/RSI, context gates...),
 converts P&L to R-multiples, and shows win rate / average R / profit factor per score band, strategy|kind, time of
@@ -98,7 +98,7 @@ def suggestions(rows, res):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("days", nargs="?", type=int, default=cfg.ADAPT_DAYS)
-    ap.add_argument("--db", default=None, help="SQLite path (default: DATABASE_URL / DB_PATH like the bot)")
+    ap.add_argument("--db", default=None, help="PostgreSQL URL (default: DATABASE_URL like the bot)")
     a = ap.parse_args(argv)
     from db import DB
     db = DB(a.db) if a.db else DB()
