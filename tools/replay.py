@@ -1,10 +1,10 @@
 """Candle-level replay: run the live signal logic over archived 5m candles and score every signal by what the
 UNDERLYING did afterwards. This is the tool for deciding which setups, score bands and gates actually work.
 
-  python tools/replay.py --db fno_bot.db --start 2026-10-01 --end 2026-10-29
+  python tools/replay.py --db "$DATABASE_URL" --start 2026-10-01 --end 2026-10-29
   python tools/replay.py --csv-dir candles/ --start 2026-10-01 --train-frac 0.7 --out replay.csv
-  python tools/replay.py --db fno_bot.db --no-context-gates        # A/B: what do the context gates add?
-  RESEARCH_MODE=true python tools/replay.py --db fno_bot.db --min-score 6.5   # study bands below the live 8.0 floor
+  python tools/replay.py --db "$DATABASE_URL" --no-context-gates        # A/B: what do the context gates add?
+  RESEARCH_MODE=true python tools/replay.py --db "$DATABASE_URL" --min-score 6.5   # study bands below the live 8.0 floor
 
 Data: the live bot archives every closed session candle to the `candles` table (CANDLE_ARCHIVE_ENABLED), or supply
 CSV files named <SYMBOL>.csv with columns ts,o,h,l,c,v (ISO timestamps, IST). Earlier days of the same file are the
