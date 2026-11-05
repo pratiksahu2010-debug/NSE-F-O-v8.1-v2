@@ -103,16 +103,23 @@ def calculate(candles: Sequence, session_candles: Sequence | None = None) -> Dic
     return out
 
 
-def enrich_snapshot(snapshot):
+def enrich_snapshot(snapshot, session_candles=None):
     """Return a copy with indicators calculated from closed candles only.
 
-    For intrabar evaluation, the live partial candle remains available as
-    snapshot.candle, but is deliberately excluded from indicator warm-up and
-    historical baselines to avoid mixing provisional values with confirmed data.
+    The current session is supplied separately so session VWAP resets at the
+    NSE open. Intrabar price is not included in any indicator baseline.
     """
     from dataclasses import replace
     closed = [bar for bar in snapshot.candles if bar.is_closed]
     if snapshot.candle.is_closed and (not closed or closed[-1].timestamp != snapshot.candle.timestamp):
         closed.append(snapshot.candle)
-    session = [bar for bar in closed if bar.timestamp.date() == snapshot.candle.timestamp.date()]
-    return replace(snapshot, indicators=calculate(closed, session))
+    session = list(session_candles) if session_candles is not None else [
+        bar for bar in closed if bar.timestamp.date() == snapshot.candle.timestamp.date()
+    ]
+    values = calculate(closed, session)
+    # Index futures volume is available for the current session, not all prior
+    # index history. Use session RVOL only when a full baseline is present.
+    session_legacy = _legacy(session)
+    if len(session_legacy) >= 21 and all(x.v > 0 for x in session_legacy[-21:]):
+        values["rvol_20"] = vol_ratio(session_legacy, 20)
+    return replace(snapshot, indicators=values)
