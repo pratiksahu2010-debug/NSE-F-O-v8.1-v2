@@ -33,7 +33,7 @@ from utils.market_hours import can_signal, IST
 from signal_engine_v2.runtime import create_engine as create_v2_engine, evaluate_legacy_candles
 from signal_engine_v2.models import DecisionState as V2DecisionState
 from signal_engine_v2.risk_gate import risk_context_from_db, validate_daily_risk, limits_from_legacy_config
-from signal_engine_v2.contracts import validate_option_quote
+from signal_engine_v2.contracts import (validate_option_quote, select_validated_contract)
 
 log = logging.getLogger("scanner")
 
@@ -606,6 +606,8 @@ class Scanner:
             sig = self._evaluate_locked(item, [], now, (expiry, (chain, fut)))
             if sig:
                 self.live_engine.mark_sent(key)
+            elif item.get("v2_decision") is not None:
+                self.v2_engine.release(item["v2_decision"])
                 log.info("LIVE INTRABAR SIGNAL %s %s %s", und.name, candidate["side"], strategy)
         except Exception:
             log.exception("live candidate evaluation failed for %s", und.name)
@@ -1488,7 +1490,10 @@ class Scanner:
         if lock is None or not lock.acquire(blocking=False):
             return self._reject("symbol evaluation busy", und.name)
         try:
-            return self._evaluate_locked(c, vix, now, pre)
+            result = self._evaluate_locked(c, vix, now, pre)
+            if result is None and c.get("v2_decision") is not None:
+                self.v2_engine.release(c["v2_decision"])
+            return result
         finally:
             lock.release()
 
@@ -1606,10 +1611,11 @@ class Scanner:
         is_mex = any(getattr(v, "name", "") == "MOMENTUM_EXPLOSION" for v in c.get("votes", []))
         is_normal_trend = any(getattr(v, "name", "") == "NORMAL_TREND" for v in c.get("votes", []))
         is_simple = any(getattr(v, "name", "") == "SIMPLE_TREND" for v in c.get("votes", []))
+        is_v2 = c.get("v2_candidate") is not None
         context_veto = ctx.veto_from(cfeat, u.kind, is_reversal_setup, ignore_trend_context=True)
-        if context_veto and (is_v7_sequential or is_momentum_orb or is_mex or is_normal_trend or is_simple):
+        if context_veto and (is_v7_sequential or is_momentum_orb or is_mex or is_normal_trend or is_simple or is_v2):
             cfeat["independent_setup_bypassed_context_veto"] = {
-                "setup": "SIMPLE_TREND" if is_simple else "V7_SEQUENTIAL" if is_v7_sequential else "MOMENTUM_ORB" if is_momentum_orb else "MOMENTUM_EXPLOSION" if is_mex else "NORMAL_TREND",
+                "setup": "SIMPLE_TREND" if is_simple else "V7_SEQUENTIAL" if is_v7_sequential else "MOMENTUM_ORB" if is_momentum_orb else "MOMENTUM_EXPLOSION" if is_mex else "NORMAL_TREND" if is_normal_trend else "V2_ENGINE",
                 "code": context_veto[0], "detail": context_veto[1]
             }
             self._note_symbol(u.name, "independent_setup", "optional context veto bypassed",
@@ -1687,6 +1693,24 @@ class Scanner:
             ]
             score_rejects = []
             extra, extra_note = 0.0, "not applied: dedicated Momentum+ORB gates are authoritative"
+        elif is_v2:
+            v2_candidate = c["v2_candidate"]
+            score_10 = round(float(v2_candidate.score) / 10.0, 2)
+            diagnostic_metrics = dict(v2_candidate.metadata or {})
+            diagnostic_metrics["score_components"] = {
+                "unified_v2_score_100": round(float(v2_candidate.score), 2)
+            }
+            gate = {"metrics": diagnostic_metrics}
+            score_reasons = list(v2_candidate.reasons) + [
+                f"Unified balanced score {v2_candidate.score:.1f}/100",
+                f"Independent strategy: {v2_candidate.strategy}",
+                "Selected after same-candle direction conflict resolution",
+            ]
+            score_rejects = []
+            extra, extra_note = 0.0, "not applied: unified v2 scorer is authoritative"
+            if v2_candidate.score < float(cfg.V2_MIN_SCORE):
+                return self._reject("v2 score gate", u.name,
+                                    f"{v2_candidate.score:.1f}/100 < {cfg.V2_MIN_SCORE:.1f}/100")
         elif is_normal_trend:
             normal_metrics = dict(c.get("normal_metrics") or {})
             score_10 = 8.0
@@ -1718,7 +1742,8 @@ class Scanner:
                                     f"{score_10:.2f}/10 < {cfg.ALERT_SCORE_MIN + extra:.2f}/10 ({extra_note})")
         side, conf = side_hint, score_10
         agree = independent_agree
-        strategy = ("SIMPLE_TREND" if is_simple else "NORMAL_TREND" if is_normal_trend
+        strategy = (c["v2_candidate"].strategy if is_v2 else
+                    "SIMPLE_TREND" if is_simple else "NORMAL_TREND" if is_normal_trend
                     else strategy_of(c["votes"][0].name) if c["votes"] else "TREND")
         tier = "CONFIRMED"
         reasons = list(score_reasons) + scorer.reasons(c["votes"], side)
