@@ -57,6 +57,7 @@ def evaluate_legacy_candles(engine: SignalPipeline, underlying: str,
         underlying, instrument_kind, timeframe, candles,
         live_candle=live_candle,
         futures_volume_by_timestamp=futures_volume_by_timestamp,
+        session_candles=session_candles,
         metadata=metadata,
     )
     return evaluate_snapshot(engine, snapshot, risk_context, risk_limits)
