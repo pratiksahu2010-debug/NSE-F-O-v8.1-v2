@@ -866,6 +866,8 @@ class Scanner:
                             0, self.normal_trend_diagnostics["selected"] - 1)
             elif normal_vote is not None:
                 votes, selected_engine = [normal_vote], normal_vote.name
+                # SIMPLE selection is counted inside _simple_candidate;
+                # LEGACY Normal Trend is counted here.
                 if normal_vote.name == "NORMAL_TREND":
                     self.normal_trend_diagnostics["selected"] += 1
             else:
