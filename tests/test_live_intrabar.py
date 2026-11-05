@@ -268,7 +268,7 @@ def test_live_orb_triggers_on_partial_breakout_with_55_percent_body_and_75_perce
     und = Underlying(name="ABC", kind="STOCK", spot_key="NSE_EQ|ABC")
     with (
         patch.object(live_module, "ema", side_effect=lambda values, period: [102.0] * len(values) if period == 9 else [100.0] * len(values)),
-        patch.object(live_module, "atr", return_value=[1.0] * len(completed)),
+        patch.object(live_module, "atr", return_value=[1.2] * len(completed)),
         patch.object(live_module, "vwap", return_value=[100.0] * len(session)),
         patch.object(live_module, "adx", return_value=[(25.0, 20.0, 10.0)] * len(completed)),
         patch.object(live_module, "rsi", return_value=[55.0] * len(completed)),
