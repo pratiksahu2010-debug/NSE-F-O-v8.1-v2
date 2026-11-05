@@ -12,10 +12,6 @@ services:
         value: 3.11.9
       - key: RUN_LOOP
         value: "true"               # scanner lifecycle is independent of /ping
-      - key: MAX_UNDERLYING_SYMBOLS
-        value: "106"               # all discovered F&O indices + 100 fixed MEX stocks (normal 50 are a subset)
-      - key: TOP_STOCKS
-        value: "50"                # compatibility only; fixed static universe is authoritative
       - key: ALERT_SCORE_MIN
         value: "8.0"
       - key: PAPER_MODE
