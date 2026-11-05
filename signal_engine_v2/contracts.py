@@ -143,6 +143,17 @@ def select_validated_contract(master, underlying: Underlying, side: str,
         if contract is None:
             rejects.append(f"{strike:g}:not_in_instrument_master")
             continue
+        if (contract.expiry != chain.expiry or contract.opt_type != option_type
+                or abs(float(contract.strike) - float(strike)) > 1e-8
+                or int(contract.lot_size or 0) <= 0 or float(contract.tick_size or 0) <= 0):
+            rejects.append(f"{strike:g}:instrument_master_contract_mismatch")
+            continue
+        if not quote.key or not contract.instrument_key:
+            rejects.append(f"{strike:g}:instrument_key_missing")
+            continue
+        if quote.key != contract.instrument_key:
+            rejects.append(f"{strike:g}:instrument_key_mismatch")
+            continue
         return ContractSelection(contract, quote), ""
     return None, ";".join(rejects) if rejects else "no_contract_candidate"
 
