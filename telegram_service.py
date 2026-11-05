@@ -127,6 +127,11 @@ def format_signal(s: Signal) -> str:
         f"<b>Risk:</b> loss/lot at SL ≈ ₹{_p(s.max_loss_lot, 0)} | R:R(T2) 1:{s.rr:.1f}",
         (f"<b>Rule:</b> EMA9/21 + VWAP + RSI + ADX ≥ {cfg.SIMPLE_ADX_MIN:g} | feed: {s.provider}"
          if s.strategy == "SIMPLE_TREND" else
+         f"<b>Unified score:</b> {s.confidence:.1f}/10 | grade {('A+' if s.confidence >= 8.5 else 'A' if s.confidence >= 7.5 else 'B')} "
+         f"(minimum {cfg.V2_MIN_SCORE / 10:.1f}/10) | feed: {s.provider}"
+         if s.strategy in {"BIG_MOMENTUM", "ORB", "VOLUME_BREAKOUT", "BREAKOUT_RETEST",
+                           "TREND_PULLBACK", "VWAP_RECLAIM_REJECTION", "MOMENTUM_REVERSAL",
+                           "SQUEEZE_BREAKOUT", "FAILED_BREAKOUT_SWEEP"} else
          f"<b>Score:</b> {s.confidence:.1f}/10 (minimum {cfg.ALERT_SCORE_MIN:.1f}/10) | technical quality checks enabled | feed: {s.provider}"),
         "<b>Why:</b>",
     ]
