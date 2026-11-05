@@ -538,7 +538,9 @@ class Scanner:
                 self._reject("option chain pending", und.name, "async refresh scheduled; no blocking REST call")
                 return
             fut = list(item["fut"])
-            sig = self._evaluate(item, [], now, (expiry, (chain, fut)))
+            # This worker already owns the per-symbol lock; call the locked implementation
+            # directly instead of _evaluate(), which would try to acquire the same lock again.
+            sig = self._evaluate_locked(item, [], now, (expiry, (chain, fut)))
             if sig:
                 self.live_engine.mark_sent(key)
                 log.info("LIVE INTRABAR SIGNAL %s %s %s", und.name, candidate["side"], strategy)
