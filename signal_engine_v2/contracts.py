@@ -39,24 +39,32 @@ def validate_option_quote(quote: OptionQuote, underlying: Underlying,
     kind = str(underlying.kind).upper()
     if kind not in ("INDEX", "STOCK"):
         return False, "unsupported_underlying_kind"
-    if quote.ltp <= 0 or quote.bid <= 0 or quote.ask <= 0:
+    try:
+        ltp, bid, ask = float(quote.ltp), float(quote.bid), float(quote.ask)
+        bid_qty, ask_qty = float(quote.bid_qty), float(quote.ask_qty)
+        oi, volume = float(quote.oi), float(quote.volume)
+    except (TypeError, ValueError, OverflowError):
+        return False, "malformed_option_quote"
+    if not all(x >= 0 for x in (ltp, bid, ask, bid_qty, ask_qty, oi, volume)):
+        return False, "negative_option_quote_field"
+    if ltp <= 0 or bid <= 0 or ask <= 0:
         return False, "missing_executable_quote"
-    if quote.ask < quote.bid:
+    if ask < bid:
         return False, "crossed_bid_ask"
-    mid = (quote.ask + quote.bid) / 2.0
-    spread_pct = (quote.ask - quote.bid) / mid * 100.0 if mid > 0 else float("inf")
+    mid = (ask + bid) / 2.0
+    spread_pct = (ask - bid) / mid * 100.0 if mid > 0 else float("inf")
     spread_limit = (policy.max_spread_pct_index if kind == "INDEX"
                     else policy.max_spread_pct_stock)
     if spread_pct > spread_limit:
         return False, f"spread_too_wide:{spread_pct:.2f}%"
     lot = max(int(underlying.lot_size), 1)
-    if quote.bid_qty < lot * policy.min_depth_lots:
+    if bid_qty < lot * policy.min_depth_lots:
         return False, "insufficient_bid_depth"
-    if quote.ask_qty < lot * policy.min_depth_lots:
+    if ask_qty < lot * policy.min_depth_lots:
         return False, "insufficient_ask_depth"
-    if quote.oi / lot < cfg.MIN_OI_LOTS[kind]:
+    if oi / lot < cfg.MIN_OI_LOTS[kind]:
         return False, "open_interest_below_minimum"
-    if quote.volume / lot < cfg.MIN_VOLUME_LOTS[kind]:
+    if volume / lot < cfg.MIN_VOLUME_LOTS[kind]:
         return False, "traded_volume_below_minimum"
     if policy.require_delta:
         try:
