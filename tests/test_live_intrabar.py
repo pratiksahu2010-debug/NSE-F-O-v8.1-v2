@@ -321,3 +321,93 @@ def test_live_mex_uses_configured_impulse_and_range_expansion_without_macd_veto(
     assert result["metrics"]["range_expansion"] >= 1.5
     assert result["metrics"]["impulse_atr"] >= 0.45
     assert result["metrics"]["macd_supporting"] is False
+
+
+
+def test_simple_live_detector_uses_simple_history_floor_not_v7_floor():
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    from engine import live_intrabar as live_module
+    from models import Candle
+
+    now = datetime(2026, 11, 3, 10, 1, tzinfo=IST)
+    session = [
+        Candle(datetime(2026, 11, 3, 9, 15, tzinfo=IST) + timedelta(minutes=5 * i),
+               100.0, 101.0, 99.0, 100.5, 1000.0)
+        for i in range(3)
+    ]
+    completed = [
+        Candle(datetime(2026, 11, 2, 12, 0, tzinfo=IST) + timedelta(minutes=5 * i),
+               100.0, 101.0, 99.0, 100.5, 1000.0)
+        for i in range(35)
+    ]
+    partial = Candle(datetime(2026, 11, 3, 10, 0, tzinfo=IST),
+                     100.5, 101.0, 100.4, 100.9, 10.0)
+    cfg = SimpleNamespace(
+        V7_MIN_BARS=50, SIMPLE_MIN_BARS=35,
+        MOMENTUM_ORB_ENABLED=False, MEX_ENABLED=False,
+        LIVE_MAX_RUNAWAY_ATR=0.8, SIMPLE_ADX_MIN=25.0,
+        SIMPLE_RSI_CALL_MIN=52.0, SIMPLE_RSI_CALL_MAX=68.0,
+        SIMPLE_RSI_PUT_MIN=32.0, SIMPLE_RSI_PUT_MAX=48.0,
+        SIMPLE_FRESH_BARS=3, SIMPLE_MIN_SESSION_BARS=3,
+        SIMPLE_MAX_EXTENSION_ATR=1.5, HTF_MINUTES=15,
+    )
+    und = Underlying(name="ABC", kind="STOCK", spot_key="NSE_EQ|ABC")
+    expected = {"side": 1, "reason": "early simple trigger", "metrics": {"trigger_edge": 100.9}}
+
+    with (
+        patch.object(live_module, "ema", side_effect=lambda values, period: [101.0] * len(values)),
+        patch.object(live_module, "atr", return_value=[1.0] * 35),
+        patch.object(live_module, "vwap", return_value=[100.0] * len(session)),
+        patch.object(live_module, "adx", return_value=[(25.0, 20.0, 10.0)] * 35),
+        patch.object(live_module, "rsi", return_value=[55.0] * 35),
+        patch.object(live_module, "htf_bias", return_value=0),
+        patch.object(live_module, "evaluate_simple_intrabar", return_value=expected),
+    ):
+        result = LiveIntrabarEngine().detect(
+            und, session, completed, partial, now, cfg,
+            allow_sequential=False, allow_mex=False, allow_orb=False,
+            allow_simple=True,
+        )
+
+    assert result is not None
+    assert result["strategy"] == "SIMPLE_TREND"
+    assert result["side"] == "CALL"
+
+
+def test_simple_live_candidate_dispatch_accepts_simple_trend_strategy():
+    import threading
+    from datetime import date
+    from types import SimpleNamespace
+    from unittest.mock import Mock, patch
+    from engine.scanner import Scanner
+    from models import Candle
+
+    scanner = Scanner.__new__(Scanner)
+    scanner._live_state_lock = threading.Lock()
+    scanner._live_inflight = set()
+    scanner._live_symbol_locks = {"ABC": threading.Lock()}
+    scanner._closed = False
+    scanner.tracker = SimpleNamespace(signals=lambda: [])
+    scanner.master = object()
+    scanner._live_option_chain = Mock(return_value=object())
+    scanner._evaluate = Mock(return_value=None)
+    scanner.live_engine = SimpleNamespace(mark_sent=Mock())
+
+    und = Underlying(name="ABC", kind="STOCK", spot_key="NSE_EQ|ABC")
+    now = datetime(2026, 11, 5, 10, 1, tzinfo=IST)
+    partial = Candle(now.replace(minute=0, second=0, microsecond=0),
+                     100.0, 101.0, 99.5, 100.8, 10.0)
+    candidate = {
+        "setup_id": "ABC:SIMPLE_TREND:CALL:2026-11-05T10:00:00+05:30",
+        "strategy": "SIMPLE_TREND", "side": "CALL",
+        "confirmation_time": now.isoformat(), "bar": partial,
+        "reason": "early SIMPLE trigger",
+    }
+    with patch("engine.scanner.pick_expiry", return_value=date(2026, 11, 26)):
+        scanner._evaluate_live_candidate(und, candidate, {"session": [], "allc": [], "fut": []})
+
+    assert scanner._evaluate.called
+    evaluated = scanner._evaluate.call_args.args[0]
+    assert evaluated["votes"][0].name == "SIMPLE_TREND"
+    assert evaluated["entry_candidate"]["mode"] == "INTRABAR"
