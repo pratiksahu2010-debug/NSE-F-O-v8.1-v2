@@ -82,7 +82,13 @@ def _p(x, d=2):
 
 STRATEGY_LABEL = {"TREND": "📈 TREND", "REVERSAL": "🔄 REVERSAL (counter-trend)", "ORB": "🚀 OPENING-RANGE BREAKOUT",
                   "VWAP": "🎯 VWAP RECLAIM / REJECTION", "SQUEEZE": "💥 SQUEEZE BREAKOUT", "MOMENTUM_EXPLOSION": "🚀 MOMENTUM EXPLOSION — CONFIRMED",
-                  "SIMPLE_TREND": "📈 TREND (EMA 9/21 + VWAP + RSI + ADX)"}
+                  "SIMPLE_TREND": "📈 TREND (EMA 9/21 + VWAP + RSI + ADX)",
+                  "BIG_MOMENTUM": "📈 BIG MOMENTUM", "VOLUME_BREAKOUT": "📊 VOLUME-CONFIRMED BREAKOUT",
+                  "BREAKOUT_RETEST": "🔁 BREAKOUT RETEST", "TREND_PULLBACK": "📈 TREND PULLBACK",
+                  "VWAP_RECLAIM_REJECTION": "🎯 VWAP RECLAIM / REJECTION",
+                  "MOMENTUM_REVERSAL": "🔄 MOMENTUM REVERSAL",
+                  "SQUEEZE_BREAKOUT": "💥 SQUEEZE BREAKOUT",
+                  "FAILED_BREAKOUT_SWEEP": "🧹 FAILED BREAKOUT / LIQUIDITY SWEEP"}
 
 
 def format_signal(s: Signal) -> str:
