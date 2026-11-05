@@ -854,10 +854,16 @@ class Scanner:
                 votes, selected_engine = [orb_vote], "MOMENTUM_ORB"
                 if normal_vote is not None:
                     self.normal_trend_diagnostics["priority_superseded"] += 1
+                    if normal_vote.name == "SIMPLE_TREND":
+                        self.normal_trend_diagnostics["selected"] = max(
+                            0, self.normal_trend_diagnostics["selected"] - 1)
             elif mex_vote is not None:
                 votes, selected_engine = [mex_vote], "MOMENTUM_EXPLOSION"
                 if normal_vote is not None:
                     self.normal_trend_diagnostics["priority_superseded"] += 1
+                    if normal_vote.name == "SIMPLE_TREND":
+                        self.normal_trend_diagnostics["selected"] = max(
+                            0, self.normal_trend_diagnostics["selected"] - 1)
             elif normal_vote is not None:
                 votes, selected_engine = [normal_vote], normal_vote.name
                 if normal_vote.name == "NORMAL_TREND":
@@ -873,7 +879,7 @@ class Scanner:
                 "gate_results": normal_result.get("gate_results", {}),
                 "gate_failures": normal_result.get("gate_failures", []),
                 "metrics": normal_result.get("metrics", {}),
-                "selection": "SELECTED" if selected_engine == "NORMAL_TREND" else
+                "selection": "SELECTED" if normal_vote and selected_engine == normal_vote.name else
                              "SUPERSEDED_BY_" + str(selected_engine) if normal_vote and selected_engine else
                              "NOT_TRIGGERED",
             }
