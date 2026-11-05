@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from signal_engine_v2 import EngineConfig, SignalPipeline
 from signal_engine_v2.models import (Candidate, Candle, CandleState, MarketSnapshot,
@@ -14,15 +14,22 @@ class FixedStrategy:
 
 
 def snapshot(closed=True):
-    bar = Candle(datetime(2026, 11, 5, 9, 30, tzinfo=timezone.utc), 100, 105, 99, 104, 1000, closed)
-    return MarketSnapshot("NIFTY", "INDEX", "5m", bar,
+    ts = datetime(2026, 11, 5, 9, 30, tzinfo=timezone.utc)
+    bar = Candle(ts, 100, 105, 99, 104, 1000, closed)
+    history_count = 219 if closed else 220
+    history = tuple(
+        Candle(ts - timedelta(minutes=5 * (history_count - i)),
+               100, 101, 99, 100, 1000, True)
+        for i in range(history_count)
+    )
+    bars = history + ((bar,) if closed else ())
+    return MarketSnapshot("NIFTY", "INDEX", "5m", bar, bars,
                           indicators={"ema_9": 103.0, "ema_21": 102.0, "ema_50": 101.0,
                                       "session_vwap": 100.0, "vwap_slope_3": 0.2,
                                       "adx_14": 30.0, "plus_di": 30.0, "minus_di": 10.0,
                                       "rsi_14": 60.0, "macd_hist": 0.5, "rvol_20": 2.0,
                                       "atr_14": 2.0},
                           metadata={"htf_bias": 1})
-
 
 def candidate(strategy="MOMENTUM", side=Side.CALL, score=80, state=CandleState.CLOSED):
     return Candidate("NIFTY", "INDEX", side, strategy, "setup-1", snapshot().candle.timestamp,
