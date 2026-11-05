@@ -14,5 +14,5 @@ __all__.append("default_strategies")
 from .runtime import create_engine, evaluate_snapshot, evaluate_legacy_candles
 __all__.extend(["create_engine", "evaluate_snapshot", "evaluate_legacy_candles"])
 
-from .runtime import build_option_signal, finalize_decision, evaluate_with_db
-__all__.extend(["build_option_signal", "finalize_decision", "evaluate_with_db"])
+from .runtime import build_option_signal, finalize_decision
+__all__.extend(["build_option_signal", "finalize_decision"])
