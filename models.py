@@ -161,6 +161,13 @@ class Signal:
     status: str = "ACTIVE"    # ACTIVE | T1_HIT | CLOSED
     cur_sl: float = 0.0
     prem_high: float = 0.0
+    prem_low: float = 0.0
+    spot_high: float = 0.0
+    spot_low: float = 0.0
+    premium_mae_r: float = 0.0
+    premium_mfe_r: float = 0.0
+    underlying_mae_r: float = 0.0
+    underlying_mfe_r: float = 0.0
     exit_price: float = 0.0
     exit_reason: str = ""
     result: str = ""          # WIN | LOSS | BREAKEVEN | TIME_EXIT
