@@ -93,6 +93,7 @@ def test_simple_mode_live_dispatch_keeps_mex_and_orb_but_not_legacy_normal():
     scanner.live_engine.detect.assert_called_once()
     kwargs = scanner.live_engine.detect.call_args.kwargs
     assert kwargs["allow_sequential"] is False
+    assert kwargs["allow_simple"] is True
     assert kwargs["allow_mex"] is True
     assert kwargs["allow_orb"] is True
 
@@ -174,3 +175,51 @@ def test_normal_structural_invalidation_distance_is_available_for_both_direction
 
     assert call_distance > 0
     assert put_distance > 0
+
+
+def test_simple_intrabar_rule_accepts_live_alignment_without_directional_candle_gate():
+    from strategies import simple_signal
+
+    now = datetime(2026, 11, 5, 10, 0, tzinfo=IST)
+    completed = [
+        Candle(now - timedelta(minutes=5 * (40 - i)), 100, 101, 99, 100, 1000, 0)
+        for i in range(40)
+    ]
+    session = completed[-4:]
+    # Red partial candle is intentional: SIMPLE must not require candle colour/body.
+    partial = Candle(now, 103, 104, 100, 101, 300, 0)
+
+    with patch.object(simple_signal, "evaluate_simple",
+                      return_value={"side": 0, "metrics": {}, "gate_failures": []}), \
+         patch.object(simple_signal, "ema", side_effect=lambda values, period: [100.5] if period == 9 else [100.0]), \
+         patch.object(simple_signal, "rsi", return_value=[60.0]), \
+         patch.object(simple_signal, "adx", return_value=[(30.0, 20.0, 10.0)]), \
+         patch.object(simple_signal, "atr", return_value=[2.0]), \
+         patch.object(simple_signal, "vwap", return_value=[100.5]):
+        result = simple_signal.evaluate_simple_intrabar(
+            session, completed, partial, min_bars=35, min_session_bars=3
+        )
+
+    assert result["side"] == 1
+    assert result["metrics"]["mode"] == "INTRABAR"
+    assert partial.c < partial.o
+
+
+def test_nearest_structure_obstacle_detects_repeated_resistance_and_support():
+    from strategies.price import nearest_structure_obstacle
+
+    now = datetime(2026, 11, 5, 12, 0, tzinfo=IST)
+    candles = []
+    for i in range(40):
+        high = 103.0
+        low = 97.0
+        if i in (25, 32):
+            high = 110.0
+        if i in (18, 28):
+            low = 90.0
+        close = 100.0
+        candles.append(Candle(now - timedelta(minutes=5 * (39 - i)),
+                              close, high, low, close, 1000, 0))
+
+    assert nearest_structure_obstacle("CALL", candles, 105.0) == 110.0
+    assert nearest_structure_obstacle("PUT", candles, 95.0) == 90.0
