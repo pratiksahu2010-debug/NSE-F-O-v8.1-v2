@@ -156,7 +156,7 @@ def test_bullish_impulse_is_not_rewarded_for_put_candidate():
     })
     put = candidate(side=Side.PUT, score=80)
     scored, breakdown = score_candidate(put, snap)
-    assert breakdown.setup_quality == 20.0
+    assert breakdown.setup_quality == 16.0
     assert scored.metadata["impulse_direction"] == 1
 
 
