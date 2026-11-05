@@ -50,6 +50,12 @@ def build_snapshot(underlying: str, instrument_kind: str, timeframe: str,
                              if b.timestamp in replacements else b for b in analysis_bars]
             details["volume_source"] = "current_month_future_volume"
         else:
+            # Index spot does not trade volume. Never reuse placeholder spot
+            # volume when the futures proxy is missing or poorly covered.
+            session_source = [replace(b, volume=0.0) for b in session_source]
+            session_times = {b.timestamp for b in session_source}
+            analysis_bars = [replace(b, volume=0.0) if b.timestamp in session_times else b
+                             for b in analysis_bars]
             details["volume_source"] = "unavailable"
     elif instrument_kind.upper() == "STOCK":
         details["volume_source"] = "underlying_equity_volume"
