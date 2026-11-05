@@ -100,10 +100,11 @@ class Config:
     SIMPLE_RSI_PUT_MAX = _env("SIMPLE_RSI_PUT_MAX", 45.0, float)       # PUT: RSI at or below ...
     SIMPLE_RSI_PUT_MIN = _env("SIMPLE_RSI_PUT_MIN", 25.0, float)       # ... but not an oversold flush
     SIMPLE_FRESH_BARS = _env("SIMPLE_FRESH_BARS", 3, int)              # fire only while the setup is at most this many candles old
+    SIMPLE_MAX_EXTENSION_ATR = _env("SIMPLE_MAX_EXTENSION_ATR", 1.8, float)  # reject chasing >1.8 ATR from EMA9
     SIMPLE_MIN_BARS = _env("SIMPLE_MIN_BARS", 35, int)                 # candles of history before the indicators are trusted (ADX needs 29 + the freshness window)
     SIMPLE_MIN_SESSION_BARS = _env("SIMPLE_MIN_SESSION_BARS", 3, int)  # closed candles today before VWAP is trusted (first scan 09:30)
-    # Underlying ticks feed a separate partial-candle detector (legacy engines only). Off by default: the simple
-    # rule works on closed candles, and an intrabar path adds a second, hard-to-audit trigger.
+    # Underlying ticks feed a separate partial-candle detector. SIMPLE uses the same EMA/VWAP/RSI/ADX rules
+    # on the live partial bar; LEGACY retains its independent intrabar Normal/MEX/ORB detectors.
     LIVE_INTRABAR_ENABLED = _env("LIVE_INTRABAR_ENABLED", False, _bool)
     # V8.1 - the scan runs SCAN_DELAY_SEC after the candle boundary. If the provider has not published the just-closed
     # candle yet, the symbol used to be discarded as "stale" and that candle was never evaluated. Now the scanner waits
