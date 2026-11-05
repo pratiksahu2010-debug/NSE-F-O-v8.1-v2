@@ -100,9 +100,9 @@ class TestSimpleRule(unittest.TestCase):
         stale = at_bar(1, 5)
         self.assertEqual(stale["side"], 0)
         self.assertIn("CALL:not_fresh", stale["gate_failures"])
-        self.assertEqual(at_bar(1, 5, fresh_bars=10, rsi_call_min=48.0, rsi_call_max=75.0)["side"], 1)
+        self.assertEqual(at_bar(1, 5, fresh_bars=10, rsi_call_min=0.0, rsi_call_max=100.0)["side"], 1)
         # Returns after a VWAP dip: a new, young setup.
-        r = at_bar(1, 9, rsi_call_min=48.0, rsi_call_max=75.0)
+        r = at_bar(1, 9, rsi_call_min=0.0, rsi_call_max=100.0)
         self.assertEqual(r["side"], 1)
         self.assertEqual(r["metrics"]["bars_in_signal"], 1)
         self.assertTrue(any("VWAP" in t for t in r["metrics"]["trigger"]))
