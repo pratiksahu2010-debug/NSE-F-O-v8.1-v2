@@ -98,3 +98,27 @@ def test_overextended_entry_is_rejected():
                           EngineConfig(unified_scoring_enabled=False, max_entry_extension_atr=1.25))
     decisions = pipe.evaluate(snap)
     assert any("entry_overextended_from_ema21" in x.rejected_reasons for x in decisions)
+
+def test_relative_strength_uses_underlying_minus_index_return():
+    from signal_engine_v2.relative_strength import relative_strength
+    assert relative_strength(1.8, 0.5) == 1.3
+    assert relative_strength(None, 0.5) is None
+
+
+def test_regime_classification_uses_directional_trend():
+    from signal_engine_v2.market_regime import classify_regime
+    values = {"adx_14": 27.0, "ema_9": 105.0, "ema_21": 103.0,
+              "ema_50": 100.0, "atr_pct": 0.2, "bb_width_pct": 2.0}
+    assert classify_regime(values) == "TRENDING_UP"
+
+
+def test_impulse_detector_labels_multi_factor_expansion():
+    from types import SimpleNamespace
+    from signal_engine_v2.impulse_detector import detect_impulse
+    candle = SimpleNamespace(high=106.0, low=100.0)
+    values = {"atr_14": 3.0, "rvol_20": 2.0, "adx_14": 28.0,
+              "adx_slope_3": 3.0, "ema_9": 105.0, "ema_21": 103.0,
+              "macd_hist": 1.2, "macd_hist_prev": 0.5}
+    result = detect_impulse(values, candle)
+    assert result["impulse_score"] >= 4.0
+    assert result["move_potential"] == "EXPLOSIVE"
