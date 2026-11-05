@@ -550,11 +550,13 @@ class Scanner:
         symbol_lock = self._live_symbol_locks.get(und.name)
         if symbol_lock is None or not symbol_lock.acquire(blocking=False):
             # This candidate was reserved by _detect_live_candidate. Always
-            # release that reservation even when a closed-bar evaluation owns
-            # the per-symbol lock, otherwise this setup can never be retried.
+            # release both reservations when the symbol lock is busy.
             with self._live_state_lock:
                 self._live_inflight.discard(key)
+            if candidate.get("v2_decision") is not None:
+                self.v2_engine.release(candidate["v2_decision"])
             return
+        published = False
         try:
             # A live alert already being tracked for this underlying blocks a
             # second entry until that signal is closed.
@@ -610,13 +612,14 @@ class Scanner:
             # directly instead of _evaluate(), which would try to acquire the same lock again.
             sig = self._evaluate_locked(item, [], now, (expiry, (chain, fut)))
             if sig:
+                published = True
                 self.live_engine.mark_sent(key)
-            elif item.get("v2_decision") is not None:
-                self.v2_engine.release(item["v2_decision"])
                 log.info("LIVE INTRABAR SIGNAL %s %s %s", und.name, candidate["side"], strategy)
         except Exception:
             log.exception("live candidate evaluation failed for %s", und.name)
         finally:
+            if not published and candidate.get("v2_decision") is not None:
+                self.v2_engine.release(candidate["v2_decision"])
             with self._live_state_lock:
                 self._live_inflight.discard(key)
             symbol_lock.release()
@@ -1903,6 +1906,8 @@ class Scanner:
         telegram_acknowledged = self._queue_signal_alert(sig, dedupe_key, format_signal(sig), now)
         log.info("signal lifecycle | signal_id=%s | database_saved=%s | preview_only=%s | telegram_acknowledged=%s",
                  sig.id, not preview_only, preview_only, bool(telegram_acknowledged))
+        if preview_only and not telegram_acknowledged:
+            return None
         log.info("SIGNAL %s %s %s %s score=%.2f/10", sig.underlying, sig.side, sig.contract, strategy, conf)
         return sig
 
