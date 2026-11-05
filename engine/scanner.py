@@ -645,7 +645,7 @@ class Scanner:
         return raw, fut
 
     def _simple_candidate(self, u: Underlying, session: List[Candle], allc: List[Candle], fut: List[Candle],
-                          now: datetime, counts: dict):
+                          now: datetime, counts: dict, context_15m: int = 0):
         """SIMPLE mode: evaluate the EMA 9/21 + VWAP + RSI + ADX rule on the latest closed candle.
 
         Returns a stage-2 candidate dict, or None when there is no trigger. Diagnostics reuse the
@@ -660,7 +660,8 @@ class Scanner:
             rsi_put_max=float(cfg.SIMPLE_RSI_PUT_MAX), rsi_put_min=float(cfg.SIMPLE_RSI_PUT_MIN),
             fresh_bars=int(cfg.SIMPLE_FRESH_BARS), min_bars=int(cfg.SIMPLE_MIN_BARS),
             min_session_bars=int(cfg.SIMPLE_MIN_SESSION_BARS),
-            max_entry_extension_atr=float(cfg.SIMPLE_MAX_EXTENSION_ATR))
+            max_entry_extension_atr=float(cfg.SIMPLE_MAX_EXTENSION_ATR),
+            context_15m=int(context_15m or 0))
         diag["scanned"] += 1
         side = int(result.get("side") or 0)
         diag["latest"][u.name] = {"reason": result.get("reason", ""), "setup_type": result.get("setup_type"),
@@ -780,7 +781,7 @@ class Scanner:
             # MEX and ORB independently for their own universes in BOTH modes.
             if cfg.STRATEGY_MODE != "LEGACY":
                 try:
-                    simple_cand = self._simple_candidate(u, session, allc, fut, now, counts)
+                    simple_cand = self._simple_candidate(u, session, allc, fut, now, counts, context_15m=htf_bias(allc, cfg.HTF_MINUTES))
                 except Exception as exc:       # one bad symbol must never abort the whole scan
                     counts["evaluation_errors"] += 1
                     self._note_symbol(u.name, "stage1", "simple rule evaluation error",
