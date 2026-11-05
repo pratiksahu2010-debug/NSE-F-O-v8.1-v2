@@ -1204,6 +1204,27 @@ class Scanner:
         return results
 
     # ---------------- stage 2 + 3 ----------------
+    def _v2_status(self) -> dict:
+        diagnostics = getattr(self, "_stage1_diagnostics", {}) or {}
+        preview_lock = getattr(self, "_v2_preview_lock", None)
+        if preview_lock is not None:
+            with preview_lock:
+                preview_count = len(getattr(self, "_v2_early_previews", {}) or {})
+        else:
+            preview_count = 0
+        return {
+            "enabled": bool(cfg.V2_ENGINE_ENABLED),
+            "profile": "BALANCED_HYBRID",
+            "strategy_count": 9,
+            "min_score": float(cfg.V2_MIN_SCORE),
+            "min_risk_reward": float(cfg.V2_MIN_RR),
+            "min_history_bars": max(220, int(cfg.V2_MIN_HISTORY_BARS)),
+            "intrabar_enabled": bool(cfg.LIVE_INTRABAR_ENABLED),
+            "closed_bar_candidates": int(diagnostics.get("v2_candidates", 0)),
+            "early_previews_cached": preview_count,
+            "signal_only": True,
+        }
+
     def run_once(self, now: datetime) -> List[Signal]:
         """One scan cycle. `last_cycle_at` is set only when the cycle completes without raising, so health
         checks can tell a finished scan from a crashed one."""
@@ -1260,6 +1281,7 @@ class Scanner:
                 "symbol_diagnostics": self._symbol_rejections,
                 "mex_engine": self.mex.snapshot(), "momentum_orb_engine": self.momentum_orb.snapshot(), "v7_sequential": self.v7_diagnostics,
                 "normal_trend_engine": self.normal_trend_diagnostics,
+                "v2_engine": self._v2_status(),
                 "normal_live_intrabar": self.live_engine.normal_snapshot(),
                 "v7_config": {"adx_min": cfg.V7_ADX_MIN, "cross_max_bars": cfg.V7_CROSSOVER_MAX_BARS,
                               "vwap_max_atr": cfg.V7_VWAP_MAX_ATR, "pullback_trend_bars": cfg.V7_PULLBACK_TREND_BARS,
@@ -1275,6 +1297,7 @@ class Scanner:
                            "symbol_diagnostics": self._symbol_rejections,
                            "mex_engine": self.mex.snapshot(), "momentum_orb_engine": self.momentum_orb.snapshot(), "v7_sequential": self.v7_diagnostics,
                            "normal_trend_engine": self.normal_trend_diagnostics,
+                           "v2_engine": self._v2_status(),
                            "normal_live_intrabar": self.live_engine.normal_snapshot(),
                            "v7_config": {"adx_min": cfg.V7_ADX_MIN, "cross_max_bars": cfg.V7_CROSSOVER_MAX_BARS,
                                          "vwap_max_atr": cfg.V7_VWAP_MAX_ATR, "pullback_trend_bars": cfg.V7_PULLBACK_TREND_BARS,
@@ -1314,6 +1337,7 @@ class Scanner:
         self.last_stats["evaluation_errors"] = eval_errors
         self.last_stats["signals"] = len(sent)
         self.last_stats["normal_trend_engine"] = self.normal_trend_diagnostics
+        self.last_stats["v2_engine"] = self._v2_status()
         self.last_stats["normal_live_intrabar"] = self.live_engine.normal_snapshot()
         self.last_stats["mex_engine"] = self.mex.snapshot()
         self.last_stats["momentum_orb_engine"] = self.momentum_orb.snapshot()
