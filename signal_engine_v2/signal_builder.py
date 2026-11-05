@@ -3,6 +3,10 @@ from __future__ import annotations
 
 import hashlib
 from datetime import datetime
+from types import SimpleNamespace
+
+from config import cfg
+from engine.entry_validation import validate_entry_candidate
 
 from engine.risk_rules import RiskRules
 from models import Signal
@@ -11,18 +15,38 @@ from .models import Candidate
 
 
 def build_signal(candidate: Candidate, selection: ContractSelection, chain,
-                 now: datetime, atr_value: float, provider: str = "",
-                 iv_rank=None, fut_price: float = 0.0, support=None,
-                 resistance=None, min_target_rr: float | None = None):
+                 now: datetime, atr_value: float, current_underlying_price: float,
+                 provider: str = "", iv_rank=None, fut_price: float = 0.0,
+                 support=None, resistance=None, min_target_rr: float | None = None):
     quote, contract = selection.quote, selection.contract
+    intrabar = candidate.candle_state.value == "INTRABAR"
+    confirm_time = now.isoformat() if intrabar else candidate.candle_timestamp.isoformat()
+    entry_contract = {
+        "side": candidate.side.value,
+        "strategy": candidate.strategy,
+        "mode": "INTRABAR" if intrabar else "CLOSED_BAR",
+        "setup_time": candidate.candle_timestamp.isoformat(),
+        "trigger_time": candidate.candle_timestamp.isoformat(),
+        "confirmation_time": confirm_time,
+        "confirmation_price": float(candidate.entry),
+    }
+    valid, validation_reason, validation_metrics = validate_entry_candidate(
+        entry_contract, SimpleNamespace(ts=candidate.candle_timestamp),
+        current_underlying_price, atr_value,
+        float(cfg.LIVE_MAX_ADVERSE_ATR), float(cfg.LIVE_MAX_RUNAWAY_ATR),
+        structural_stop=candidate.stop, target=candidate.target1,
+        min_rr=min_target_rr,
+    )
+    if not valid:
+        return None, validation_reason
     levels = build_option_risk_levels(
-        selection, candidate.side.value, candidate.entry, candidate.stop,
+        selection, candidate.side.value, current_underlying_price, candidate.stop,
         atr_value, min_target_rr=min_target_rr
     )
     if not levels:
         return None, "option_risk_levels_invalid"
 
-    ts = candidate.candle_timestamp.isoformat(timespec="seconds")
+    ts = (now if intrabar else candidate.candle_timestamp).isoformat(timespec="seconds")
     signal_id = hashlib.sha256(
         f"{candidate.underlying}|{candidate.side.value}|{candidate.strategy}|{candidate.setup_id}|{ts}".encode()
     ).hexdigest()[:24]
@@ -60,9 +84,9 @@ def build_signal(candidate: Candidate, selection: ContractSelection, chain,
         dte=max(0, (contract.expiry - now.date()).days),
         confidence=round(candidate.score / 10.0, 2),
         agree=int(candidate.metadata.get("agree", 1)),
-        reasons=reasons, status="ACTIVE", cur_sl=sl, prem_high=entry,
+        reasons=reasons + [f"Entry validation: {validation_metrics}"], status="ACTIVE", cur_sl=sl, prem_high=entry,
         provider=provider, strategy=candidate.strategy,
-        tier="CONFIRMED" if candidate.candle_state.value == "CLOSED" else "EARLY",
+        tier="EARLY" if intrabar else "CONFIRMED",
         kind=candidate.instrument_kind.upper(), modeled_pnl=0.0,
     )
     return signal, ""
