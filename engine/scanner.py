@@ -1885,20 +1885,19 @@ class Scanner:
         preview_only = bool(is_v2 and intrabar_entry)
         if not preview_only:
             self.db.save_signal(sig)
-        try:      # features for tools/calibrate.py: what the signal looked like when it fired
-            if preview_only:
-                raise StopIteration("intrabar preview is not persisted as a tracked signal")
-            feats = dict(gate.get("metrics", {}))
-            if is_v7_sequential:
-                feats["v7_sequential"] = v7_decision.metrics
-            feats.update(cfeat)
-            feats.update({"score": score_10, "strategy": strategy, "kind": u.kind, "side": side,
-                          "votes": [getattr(v, "name", "") for v in c["votes"]], "adaptive_extra": extra,
-                          "spread_pct": q.spread_pct, "dte": (expiry - today).days, "regime_label": reg.get("label"),
-                          "entry_contract": entry_candidate, "entry_validation": structure_metrics})
-            self.db.save_features(sig.id, sig.ts[:10], feats)
-        except Exception:
-            log.exception("signal feature logging failed")
+        if not preview_only:
+            try:      # features for tools/calibrate.py: what the signal looked like when it fired
+                feats = dict(gate.get("metrics", {}))
+                if is_v7_sequential:
+                    feats["v7_sequential"] = v7_decision.metrics
+                feats.update(cfeat)
+                feats.update({"score": score_10, "strategy": strategy, "kind": u.kind, "side": side,
+                              "votes": [getattr(v, "name", "") for v in c["votes"]], "adaptive_extra": extra,
+                              "spread_pct": q.spread_pct, "dte": (expiry - today).days, "regime_label": reg.get("label"),
+                              "entry_contract": entry_candidate, "entry_validation": structure_metrics})
+                self.db.save_features(sig.id, sig.ts[:10], feats)
+            except Exception:
+                log.exception("signal feature logging failed")
         if not preview_only:
             self.tracker.add(sig, contract)
         telegram_acknowledged = self._queue_signal_alert(sig, dedupe_key, format_signal(sig), now)
