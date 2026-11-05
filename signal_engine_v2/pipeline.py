@@ -45,6 +45,17 @@ class SignalPipeline:
             reasons.append("insufficient_220_bar_history")
         if not 0 <= c.score <= 100 or c.score < self.config.min_score:
             reasons.append("score_below_minimum")
+        adx_value = snapshot.indicators.get("adx_14")
+        if not isinstance(adx_value, (int, float)) or adx_value < self.config.min_adx:
+            reasons.append(f"adx_below_minimum_{self.config.min_adx:g}")
+        # Avoid late entries after price has travelled too far from the
+        # short-term trend mean. This is an entry-quality gate, not a signal cap.
+        atr_value = snapshot.indicators.get("atr_14")
+        ema21 = snapshot.indicators.get("ema_21")
+        if isinstance(atr_value, (int, float)) and atr_value > 0 and isinstance(ema21, (int, float)):
+            extension = ((c.entry - ema21) if c.side.value == "CALL" else (ema21 - c.entry)) / atr_value
+            if extension > self.config.max_entry_extension_atr:
+                reasons.append("entry_overextended_from_ema21")
         if c.candle_timestamp != snapshot.candle.timestamp:
             reasons.append("candidate_confirmation_timestamp_mismatch")
         if c.age_bars > self.config.max_candidate_age_bars:
