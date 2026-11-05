@@ -366,7 +366,8 @@ def test_simple_live_detector_uses_simple_history_floor_not_v7_floor():
         patch.object(live_module, "htf_bias", return_value=0),
         patch.object(live_module, "evaluate_simple_intrabar", return_value=expected),
     ):
-        result = LiveIntrabarEngine().detect(
+        engine = LiveIntrabarEngine()
+        result = engine.detect(
             und, session, completed, partial, now, cfg,
             allow_sequential=False, allow_mex=False, allow_orb=False,
             allow_simple=True,
