@@ -14,6 +14,9 @@ from .models import DecisionState, SignalDecision
 from .pipeline import SignalPipeline
 from .risk_gate import RiskContext, RiskLimits, limits_from_legacy_config, validate_daily_risk
 from .strategies import default_strategies
+from .contracts import ContractPolicy, select_validated_contract
+from .signal_builder import build_signal
+from engine.chain_quality import chain_quality_issues
 
 
 def create_engine(strategies: Optional[Sequence] = None,
@@ -56,3 +59,28 @@ def evaluate_legacy_candles(engine: SignalPipeline, underlying: str,
         metadata=metadata,
     )
     return evaluate_snapshot(engine, snapshot, risk_context, risk_limits)
+
+
+def build_option_signal(candidate, master, underlying, chain, now,
+                        atr_value: float, current_underlying_price: float,
+                        provider: str = "", iv_rank=None, fut_price: float = 0.0,
+                        policy: Optional[ContractPolicy] = None):
+    """Validate chain, select an executable contract and build a Signal record.
+
+    The returned Signal is ready for the existing DB/tracker/outbox layer. The
+    caller remains responsible for persistence and Telegram dispatch.
+    """
+    issues = chain_quality_issues(chain, current_underlying_price, candidate.side.value)
+    if issues:
+        return None, "chain_quality:" + ",".join(issues)
+    selection, reason = select_validated_contract(
+        master, underlying, candidate.side.value, chain, now,
+        iv_rank=iv_rank, policy=policy,
+    )
+    if selection is None:
+        return None, "contract_selection:" + str(reason)
+    return build_signal(
+        candidate, selection, chain, now, atr_value,
+        current_underlying_price, provider=provider, iv_rank=iv_rank,
+        fut_price=fut_price, min_target_rr=1.5,
+    )
