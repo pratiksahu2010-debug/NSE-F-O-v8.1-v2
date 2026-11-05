@@ -1032,12 +1032,9 @@ class Scanner:
                 orb_vote = Vote("MOMENTUM_ORB", orb_side * min(1.0, float(orb_result["score"]) / 100.0), str(orb_result["reason"]))
                 counts["momentum_orb_confirmed"] = counts.get("momentum_orb_confirmed", 0) + 1
             mex_vote = None
-            if mex_sgn in (1, -1) and (mex_state == "CONFIRMED" or not cfg.MEX_LIFECYCLE_ENABLED):
+            if mex_sgn in (1, -1) and mex_state == "CONFIRMED":
                 mex_vote = Vote("MOMENTUM_EXPLOSION", int(mex_sgn) * min(1.0, float(mex_score or 0.0) / 100.0), str(mex_result.get("reason") or "Momentum expansion"))
                 counts["mex_confirmed"] = counts.get("mex_confirmed", 0) + 1
-            elif mex_sgn in (1, -1):
-                counts["mex_awaiting_confirmation"] = counts.get("mex_awaiting_confirmation", 0) + 1
-                self._note_symbol(u.name, "mex", "optional lifecycle pending", f"state={mex_state}")
             normal_vote = None
             if int(normal_result.get("side") or 0) in (1, -1):
                 normal_name = "SIMPLE_TREND" if cfg.STRATEGY_MODE != "LEGACY" else "NORMAL_TREND"
