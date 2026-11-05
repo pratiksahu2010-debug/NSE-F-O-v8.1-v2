@@ -60,9 +60,11 @@ class SignalPipeline:
             reasons.append("higher_timeframe_contains_unclosed_candle")
         return tuple(reasons)
 
-    def _rank(self, c: Candidate) -> tuple[float, int, str]:
-        # Strategy priority only breaks near-ties; a clearly better setup wins.
-        return (c.score, -c.strategy_priority, c.strategy.upper())
+    def _rank(self, c: Candidate) -> tuple[int, float, int, str]:
+        # A closed-bar confirmation always outranks an early intrabar preview
+        # for the same underlying/candle. Strategy priority breaks score ties.
+        closed_first = 1 if c.candle_state is CandleState.CLOSED else 0
+        return (closed_first, c.score, -c.strategy_priority, c.strategy.upper())
 
     def resolve(self, candidates: Iterable[Candidate], snapshot: MarketSnapshot) -> list[SignalDecision]:
         valid: list[Candidate] = []
