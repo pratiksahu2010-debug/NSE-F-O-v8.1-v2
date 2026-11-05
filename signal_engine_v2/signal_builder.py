@@ -20,6 +20,7 @@ def build_signal(candidate: Candidate, selection: ContractSelection, chain,
                  support=None, resistance=None, min_target_rr: float | None = None):
     quote, contract = selection.quote, selection.contract
     intrabar = candidate.candle_state.value == "INTRABAR"
+    required_min_rr = min_target_rr if min_target_rr is not None else 1.5
     confirm_time = now.isoformat() if intrabar else candidate.candle_timestamp.isoformat()
     entry_contract = {
         "side": candidate.side.value,
@@ -35,7 +36,7 @@ def build_signal(candidate: Candidate, selection: ContractSelection, chain,
         current_underlying_price, atr_value,
         float(cfg.LIVE_MAX_ADVERSE_ATR), float(cfg.LIVE_MAX_RUNAWAY_ATR),
         structural_stop=candidate.stop, target=candidate.target1,
-        min_rr=min_target_rr,
+        min_rr=required_min_rr,
     )
     if not valid:
         return None, validation_reason
