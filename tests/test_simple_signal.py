@@ -136,9 +136,14 @@ class TestScannerSimpleMode(unittest.TestCase):
             self.assertIn("ADX", msg)
             self.assertIn("Rule:", msg)
             self.assertNotIn("minimum 8.0/10", msg)
-            # Plain ATR stop on the underlying (SL_ATR x 5m ATR), target on the right side.
-            a5 = atr(sc.live_context["NIFTY"]["allc"], 14)[-1]
-            self.assertAlmostEqual(abs(sig.spot - sig.und_sl), cfg.SL_ATR * a5, delta=0.02 * a5)
+            # SIMPLE Normal uses a nearby structural invalidation level, with the
+            # existing minimum ATR noise buffer applied by RiskRules.
+            from strategies.price import invalidation_distance
+            context = sc.live_context["NIFTY"]
+            a5 = atr(context["allc"], 14)[-1]
+            raw_stop = invalidation_distance(side, context["session"], context["allc"], sig.spot, "TREND")
+            expected_stop = max(raw_stop, cfg.SL_MIN_ATR * a5)
+            self.assertAlmostEqual(abs(sig.spot - sig.und_sl), expected_stop, delta=0.02 * a5)
             self.assertEqual(1 if sig.und_t1 > sig.spot else -1, 1 if side == "CALL" else -1)
             self.assertIn("NIFTY", tracker.active[sig.id][0].underlying)
             # Same candle again: one open signal per underlying, nothing duplicated.
