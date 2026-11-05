@@ -173,3 +173,21 @@ def test_deduplication_state_resets_on_new_trading_date():
     next_day_candidate = replace(candidate(), candle_timestamp=next_day_bar.timestamp)
     pipe.strategies = (FixedStrategy("momentum", [next_day_candidate]),)
     assert any(x.state is DecisionState.CONFIRMED for x in pipe.evaluate(next_day))
+
+
+def test_rvol_20_requires_all_twenty_reference_bars():
+    from signal_engine_v2.indicators import calculate
+
+    ts = datetime(2026, 11, 5, 9, 15, tzinfo=timezone.utc)
+    full = tuple(
+        Candle(ts + timedelta(minutes=5 * i), 100, 101, 99, 100.5,
+               200.0 if i == 21 else 100.0, True)
+        for i in range(22)
+    )
+    result = calculate(full)
+    assert result["rvol_20"] == 2.0
+
+    incomplete = list(full)
+    incomplete[5] = replace(incomplete[5], volume=0.0)
+    result = calculate(tuple(incomplete))
+    assert result["rvol_20"] is None
