@@ -35,7 +35,10 @@ class ContractSelection:
 
 def validate_option_quote(quote: OptionQuote, underlying: Underlying,
                           policy: ContractPolicy | None = None) -> tuple[bool, str]:
-    policy = policy or ContractPolicy()
+    policy = policy or ContractPolicy(
+        max_spread_pct_index=float(cfg.MAX_SPREAD_PCT),
+        max_spread_pct_stock=float(cfg.MAX_SPREAD_PCT_STOCK),
+    )
     kind = str(underlying.kind).upper()
     if kind not in ("INDEX", "STOCK"):
         return False, "unsupported_underlying_kind"
@@ -49,6 +52,8 @@ def validate_option_quote(quote: OptionQuote, underlying: Underlying,
         return False, "negative_option_quote_field"
     if ltp <= 0 or bid <= 0 or ask <= 0:
         return False, "missing_executable_quote"
+    if ask < float(cfg.MIN_PREMIUM):
+        return False, "option_premium_below_minimum"
     if ask < bid:
         return False, "crossed_bid_ask"
     mid = (ask + bid) / 2.0
@@ -83,7 +88,10 @@ def select_validated_contract(master, underlying: Underlying, side: str,
                               iv_rank: Optional[float] = None,
                               policy: ContractPolicy | None = None
                               ) -> tuple[Optional[ContractSelection], str]:
-    policy = policy or ContractPolicy()
+    policy = policy or ContractPolicy(
+        max_spread_pct_index=float(cfg.MAX_SPREAD_PCT),
+        max_spread_pct_stock=float(cfg.MAX_SPREAD_PCT_STOCK),
+    )
     side = str(side).upper()
     if side not in ("CALL", "PUT"):
         return None, "invalid_option_direction"
