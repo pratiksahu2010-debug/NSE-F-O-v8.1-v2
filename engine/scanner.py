@@ -1577,8 +1577,10 @@ class Scanner:
         if px is None:
             self._watch(u.name, side, entry_bar.ts, c["ps"], "INVALIDATED", score_10, score_reasons + ["no executable option price"], now)
             return self._reject("no executable price", u.name, side)
-        # Simple rule: a plain ATR stop (SL_ATR x 5m ATR) and ATR targets; no setup-specific structure to second-guess.
-        stop_dist = None if is_simple else invalidation_distance(side, c["session"], c["allc"], spot, strategy)
+        # Normal/SIMPLE uses the same nearby structural invalidation reference as
+        # the legacy trend path (EMA9, session VWAP, or trigger-candle extreme).
+        # RiskRules still rejects stops outside its permitted ATR envelope.
+        stop_dist = invalidation_distance(side, c["session"], c["allc"], spot, strategy)
         lv = self.risk.levels(px, q.delta, a5, contract.tick_size, side, spot, stop_dist)
         if not lv or float(lv.get("rr", 0.0)) < float(cfg.MIN_RR_T1):
             self._watch(u.name, side, entry_bar.ts, c["ps"], "INVALIDATED", score_10, score_reasons + ["risk/reward validation failed"], now)
