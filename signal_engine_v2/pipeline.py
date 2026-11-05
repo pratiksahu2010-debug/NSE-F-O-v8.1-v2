@@ -41,6 +41,8 @@ class SignalPipeline:
 
     def _reject_reasons(self, c: Candidate, snapshot: MarketSnapshot) -> tuple[str, ...]:
         reasons: list[str] = []
+        if len([bar for bar in snapshot.candles if bar.is_closed]) < self.config.min_history_bars:
+            reasons.append("insufficient_220_bar_history")
         if not 0 <= c.score <= 100 or c.score < self.config.min_score:
             reasons.append("score_below_minimum")
         if c.age_bars > self.config.max_candidate_age_bars:
