@@ -1593,28 +1593,29 @@ class Scanner:
         # A repeated swing level immediately ahead of price can cap the realistic
         # first target. Reduce T1 to just before that obstacle, or reject only
         # when the remaining structural reward no longer meets the existing RR.
-        obstacle = nearest_structure_obstacle(side, c["allc"], spot)
-        if obstacle is not None:
-            obstacle_target = float(obstacle) - sgn * (0.10 * a5)
-            current_target = float(lv.get("und_t1") or 0.0)
-            before_target = (spot < obstacle < current_target) if sgn > 0 else (current_target < obstacle < spot)
-            if before_target:
-                structural_risk = (spot - float(lv["und_sl"])) * sgn
-                structural_reward = (obstacle_target - spot) * sgn
-                obstacle_rr = structural_reward / structural_risk if structural_risk > 0 else 0.0
-                if structural_reward <= 0 or obstacle_rr < float(cfg.MIN_RR_T1):
-                    detail = (f"nearby {'resistance' if sgn > 0 else 'support'} at {obstacle:.2f} "
-                              f"leaves RR {obstacle_rr:.2f} below {float(cfg.MIN_RR_T1):.2f}")
-                    self._watch(u.name, side, entry_bar.ts, c["ps"], "INVALIDATED",
-                                score_10, score_reasons + [detail], now)
-                    return self._reject("nearby structure blocks target", u.name, detail)
-                lv["und_t1"] = obstacle_target
-                tick = max(0.01, float(contract.tick_size or 0.05))
-                premium_target = px + abs(float(q.delta or 0.5)) * sgn * (obstacle_target - spot)
-                lv["t1"] = math.ceil(premium_target / tick - 1e-9) * tick
-                score_reasons.append(
-                    f"first target capped before nearby {'resistance' if sgn > 0 else 'support'} {obstacle:.2f}"
-                )
+        if is_simple:
+            obstacle = nearest_structure_obstacle(side, c["allc"], spot)
+            if obstacle is not None:
+                obstacle_target = float(obstacle) - sgn * (0.10 * a5)
+                current_target = float(lv.get("und_t1") or 0.0)
+                before_target = (spot < obstacle < current_target) if sgn > 0 else (current_target < obstacle < spot)
+                if before_target:
+                    structural_risk = (spot - float(lv["und_sl"])) * sgn
+                    structural_reward = (obstacle_target - spot) * sgn
+                    obstacle_rr = structural_reward / structural_risk if structural_risk > 0 else 0.0
+                    if structural_reward <= 0 or obstacle_rr < float(cfg.MIN_RR_T1):
+                        detail = (f"nearby {'resistance' if sgn > 0 else 'support'} at {obstacle:.2f} "
+                                  f"leaves RR {obstacle_rr:.2f} below {float(cfg.MIN_RR_T1):.2f}")
+                        self._watch(u.name, side, entry_bar.ts, c["ps"], "INVALIDATED",
+                                    score_10, score_reasons + [detail], now)
+                        return self._reject("nearby structure blocks target", u.name, detail)
+                    lv["und_t1"] = obstacle_target
+                    tick = max(0.01, float(contract.tick_size or 0.05))
+                    premium_target = px + abs(float(q.delta or 0.5)) * sgn * (obstacle_target - spot)
+                    lv["t1"] = math.ceil(premium_target / tick - 1e-9) * tick
+                    score_reasons.append(
+                        f"first target capped before nearby {'resistance' if sgn > 0 else 'support'} {obstacle:.2f}"
+                    )
         valid_structure, structure_reason, structure_metrics = validate_entry_candidate(
             entry_candidate, entry_bar, spot, a5,
             cfg.LIVE_MAX_ADVERSE_ATR, cfg.LIVE_MAX_RUNAWAY_ATR,
