@@ -1710,7 +1710,7 @@ class Scanner:
             }
             gate = {"metrics": diagnostic_metrics}
             score_reasons = list(v2_candidate.reasons) + [
-                f"Unified balanced score {v2_candidate.score:.1f}/100",
+                f"Unified balanced score {v2_candidate.score:.1f}/100 | grade {v2_candidate.metadata.get('grade', 'B')}",
                 f"Independent strategy: {v2_candidate.strategy}",
                 "Selected after same-candle direction conflict resolution",
             ]
