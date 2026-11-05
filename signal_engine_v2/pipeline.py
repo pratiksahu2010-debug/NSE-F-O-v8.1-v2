@@ -115,5 +115,11 @@ class SignalPipeline:
                 fresh.append(decision)
         return rejected + fresh
 
+    def release(self, decision: SignalDecision) -> None:
+        """Allow a same-candle retry when a downstream risk/contract gate fails."""
+        dedup_key = decision.decision_key + "|" + decision.state.value
+        with self._lock:
+            self._emitted.discard(dedup_key)
+
     def evaluate(self, snapshot: MarketSnapshot) -> list[SignalDecision]:
         return self.resolve(self.collect(snapshot), snapshot)
