@@ -10,6 +10,7 @@ V2_ENGINE_ENABLED=false
 V2_MIN_SCORE=65
 V2_MIN_RR=1.5
 V2_MIN_HISTORY_BARS=220
+# V2 ADX(14) minimum is fixed in code at 22; it cannot be lowered by env
 ```
 
 Set `V2_ENGINE_ENABLED=true` only after reviewing replay results and completing paper
@@ -29,8 +30,20 @@ The V2 engine evaluates nine independent 5-minute setup families:
 
 A shared 100-point score combines setup/price structure, EMA alignment, VWAP, ADX/+DI/-DI,
 relative volume, RSI/MACD, completed 15-minute context, candle quality and volatility.
+ADX(14) >= 22 is a hard publication gate for every V2 strategy and both early previews
+and closed-bar confirmations. Missing ADX is rejected. A score cannot override this gate.
+Entries more than 1.25 ATR from EMA21 are rejected as overextended; the setting is
+available as EngineConfig.max_entry_extension_atr.
 Provisional grade bands are A+ (85-100), A (75-84), B (65-74); below 65 is rejected.
 These are initial engineering thresholds, not evidence of profitability.
+
+The context layer classifies TRENDING_UP, TRENDING_DOWN, COMPRESSION, SIDEWAYS,
+CHOPPY and VOLATILITY_EXPANSION regimes. The impulse detector scores range expansion,
+relative-volume expansion, ADX acceleration, EMA separation and MACD histogram expansion.
+It adds a separate NORMAL / STRONG / EXPLOSIVE move-potential label; this label is not
+a promise of future movement and never creates a signal by itself. Relative strength
+versus NIFTY is calculated from timestamp-aligned session returns when both returns
+are available; missing reference data is neutral, not fabricated.
 
 The resolver selects one candidate per underlying/candle and rejects unclear opposing
 directions. The 220-bar history floor is mandatory. Indicators use finalized candles;
