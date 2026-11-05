@@ -206,9 +206,10 @@ class TestPipelineLogging(unittest.TestCase):
         sc.mkt_bias = 0
         with patch("engine.scanner.htf_bias", return_value=-1):               # 15m trend against the CALL
             out = sc.run_once(now)
-        self.assertEqual(len(out), 1, sc.last_stats)
-        self.assertNotIn("15m trend opposed", sc.last_stats["rejects"])
-        # V7 treats 15m trend as informational even when the old compatibility flag is enabled.
+        self.assertEqual(out, [])
+        self.assertEqual(sc.last_stats["rejects"].get("15m normal context mismatch"), 1)
+        self.assertIn("15m normal context mismatch",
+                      sc.last_stats["symbol_diagnostics"]["NIFTY"]["reasons"][0])
 
     def test_archive_can_be_disabled(self):
         with Flags(CANDLE_ARCHIVE_ENABLED=False):

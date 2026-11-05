@@ -1,5 +1,6 @@
 """Three-stage funnel: (1) cheap spot scan -> (2) OI/chain enrichment -> (3) score, pick contract, risk, alert."""
 import logging
+import math
 import threading
 import time
 from types import SimpleNamespace
@@ -12,7 +13,8 @@ from data import events
 from data.instruments import Master
 from indicators.core import atr, htf_bias, htf_vwap_bias, iv_rank as calc_iv_rank, with_volume
 from models import Candle, Signal, Underlying, Vote
-from strategies.price import all_setups, invalidation_distance, price_diagnose, price_score, price_votes, strategy_of
+from strategies.price import (all_setups, invalidation_distance, nearest_structure_obstacle,
+                              price_diagnose, price_score, price_votes, strategy_of)
 from strategies.regime import regime as calc_regime
 from engine import context as ctx, scorer
 from engine.chain_quality import chain_quality_issues
@@ -114,6 +116,12 @@ def _stage1_fetch_results(pool, symbols, fetcher, timeout_seconds):
         log.warning("stage1 spot request timed out | symbol=%s | elapsed=%.1fs | budget=%.1fs",
                     symbol.name, elapsed, timeout_seconds)
         yield symbol, (None, None), "timeout"
+
+
+def _normal_15m_context_matches(side: str, htf: int) -> bool:
+    """Normal entries require completed 15m trend context in the trade direction."""
+    expected = 1 if str(side).upper() == "CALL" else -1 if str(side).upper() == "PUT" else 0
+    return expected != 0 and int(htf or 0) == expected
 
 
 def fresh_reference(earlier: Optional[dict], now: datetime) -> Optional[dict]:
@@ -411,15 +419,17 @@ class Scanner:
 
     def _detect_live_candidate(self, und, partial, now, cached):
         try:
-            # SIMPLE keeps its own closed-candle Normal rule; independent MEX/ORB
-            # detectors remain eligible for live triggers in either strategy mode.
+            # SIMPLE uses its own EMA/VWAP/RSI/ADX live trigger; LEGACY keeps
+            # the separate Normal detector. MEX and ORB remain independent.
             allow_sequential = (cfg.STRATEGY_MODE == "LEGACY" and
                                 (und.kind == "INDEX" or und.name in NORMAL_SYMBOL_SET))
+            allow_simple = cfg.STRATEGY_MODE != "LEGACY"
             allow_mex = und.name in self.mex.universe
             allow_orb = und.name in self.momentum_orb.universe
             candidate = self.live_engine.detect(und, cached["session"], cached["allc"], partial, now, cfg,
                                                 allow_sequential=allow_sequential,
-                                                allow_mex=allow_mex, allow_orb=allow_orb)
+                                                allow_mex=allow_mex, allow_orb=allow_orb,
+                                                allow_simple=allow_simple)
             if not candidate:
                 return
             strategy = candidate["strategy"]
@@ -649,7 +659,8 @@ class Scanner:
             rsi_call_min=float(cfg.SIMPLE_RSI_CALL_MIN), rsi_call_max=float(cfg.SIMPLE_RSI_CALL_MAX),
             rsi_put_max=float(cfg.SIMPLE_RSI_PUT_MAX), rsi_put_min=float(cfg.SIMPLE_RSI_PUT_MIN),
             fresh_bars=int(cfg.SIMPLE_FRESH_BARS), min_bars=int(cfg.SIMPLE_MIN_BARS),
-            min_session_bars=int(cfg.SIMPLE_MIN_SESSION_BARS))
+            min_session_bars=int(cfg.SIMPLE_MIN_SESSION_BARS),
+            max_entry_extension_atr=float(cfg.SIMPLE_MAX_EXTENSION_ATR))
         diag["scanned"] += 1
         side = int(result.get("side") or 0)
         diag["latest"][u.name] = {"reason": result.get("reason", ""), "setup_type": result.get("setup_type"),
@@ -1395,8 +1406,19 @@ class Scanner:
                         reasons=[entry_reason], now=now)
             return self._reject(entry_reason, u.name, str(entry_metrics))
 
-        # --- 15m trend of the underlying (and of NIFTY for stocks) ---
+        # --- 15m trend context ---
         htf = htf_bias(c["allc"], cfg.HTF_MINUTES)
+        is_normal_context_setup = any(
+            getattr(v, "name", "") in {"SIMPLE_TREND", "NORMAL_TREND"}
+            for v in c.get("votes", [])
+        )
+        if is_normal_context_setup and not _normal_15m_context_matches(side_hint, htf):
+            required_context = "bullish" if side_hint == "CALL" else "bearish"
+            actual_context = "bullish" if htf == 1 else "bearish" if htf == -1 else "neutral/unknown"
+            detail = f"Normal {side_hint} requires completed 15m {required_context} context; current 15m context is {actual_context}"
+            self._watch(u.name, side_hint, entry_bar.ts, c["ps"], "INVALIDATED",
+                        reasons=[detail], now=now)
+            return self._reject("15m normal context mismatch", u.name, detail)
         # 15m session VWAP is supporting score evidence only. Use today's closed
         # 5m session candles; the helper drops any incomplete 15m aggregate.
         htf_vwap = htf_vwap_bias(c["session"], cfg.HTF_MINUTES)
@@ -1516,7 +1538,7 @@ class Scanner:
                 f"Independent Normal Trend {normal_metrics.get('setup_type', 'CONFIRMED_SETUP')}: EMA9/21, MACD(12/26/9), session VWAP, RSI(14), ADX(14) with directional DI",
                 str(c["votes"][0].reason),
                 f"ADX {normal_metrics.get('adx', 0):.1f}; +DI {normal_metrics.get('plus_di', 0):.1f}; -DI {normal_metrics.get('minus_di', 0):.1f}; RSI {normal_metrics.get('rsi', 0):.1f}; MACD histogram {normal_metrics.get('macd_histogram', 0):.4f}",
-                "15-minute chart is informational context only",
+                f"15-minute context aligned: {'bullish' if htf == 1 else 'bearish'}",
             ]
             score_rejects = []
             extra, extra_note = 0.0, "not applied: normal trend engine is authoritative"
@@ -1560,12 +1582,40 @@ class Scanner:
         if px is None:
             self._watch(u.name, side, entry_bar.ts, c["ps"], "INVALIDATED", score_10, score_reasons + ["no executable option price"], now)
             return self._reject("no executable price", u.name, side)
-        # Simple rule: a plain ATR stop (SL_ATR x 5m ATR) and ATR targets; no setup-specific structure to second-guess.
-        stop_dist = None if is_simple else invalidation_distance(side, c["session"], c["allc"], spot, strategy)
+        # Normal/SIMPLE uses the same nearby structural invalidation reference as
+        # the legacy trend path (EMA9, session VWAP, or trigger-candle extreme).
+        # RiskRules still rejects stops outside its permitted ATR envelope.
+        stop_dist = invalidation_distance(side, c["session"], c["allc"], spot, strategy)
         lv = self.risk.levels(px, q.delta, a5, contract.tick_size, side, spot, stop_dist)
         if not lv or float(lv.get("rr", 0.0)) < float(cfg.MIN_RR_T1):
             self._watch(u.name, side, entry_bar.ts, c["ps"], "INVALIDATED", score_10, score_reasons + ["risk/reward validation failed"], now)
             return self._reject("risk levels rejected", u.name, side)
+        # A repeated swing level immediately ahead of price can cap the realistic
+        # first target. Reduce T1 to just before that obstacle, or reject only
+        # when the remaining structural reward no longer meets the existing RR.
+        if is_simple:
+            obstacle = nearest_structure_obstacle(side, c["allc"], spot)
+            if obstacle is not None:
+                obstacle_target = float(obstacle) - sgn * (0.10 * a5)
+                current_target = float(lv.get("und_t1") or 0.0)
+                before_target = (spot < obstacle < current_target) if sgn > 0 else (current_target < obstacle < spot)
+                if before_target:
+                    structural_risk = (spot - float(lv["und_sl"])) * sgn
+                    structural_reward = (obstacle_target - spot) * sgn
+                    obstacle_rr = structural_reward / structural_risk if structural_risk > 0 else 0.0
+                    if structural_reward <= 0 or obstacle_rr < float(cfg.MIN_RR_T1):
+                        detail = (f"nearby {'resistance' if sgn > 0 else 'support'} at {obstacle:.2f} "
+                                  f"leaves RR {obstacle_rr:.2f} below {float(cfg.MIN_RR_T1):.2f}")
+                        self._watch(u.name, side, entry_bar.ts, c["ps"], "INVALIDATED",
+                                    score_10, score_reasons + [detail], now)
+                        return self._reject("nearby structure blocks target", u.name, detail)
+                    lv["und_t1"] = obstacle_target
+                    tick = max(0.01, float(contract.tick_size or 0.05))
+                    premium_target = px + abs(float(q.delta or 0.5)) * sgn * (obstacle_target - spot)
+                    lv["t1"] = math.ceil(premium_target / tick - 1e-9) * tick
+                    score_reasons.append(
+                        f"first target capped before nearby {'resistance' if sgn > 0 else 'support'} {obstacle:.2f}"
+                    )
         valid_structure, structure_reason, structure_metrics = validate_entry_candidate(
             entry_candidate, entry_bar, spot, a5,
             cfg.LIVE_MAX_ADVERSE_ATR, cfg.LIVE_MAX_RUNAWAY_ATR,

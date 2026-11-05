@@ -370,3 +370,43 @@ def invalidation_distance(side: str, session: List[Candle], allc: List[Candle], 
             level = min(c.l for c in recent) if sgn > 0 else max(c.h for c in recent)
     raw = sgn * (spot - float(level)) + cfg.STOP_BUFFER_ATR * a
     return float(raw) if raw > 0 else 0.0
+
+
+def nearest_structure_obstacle(side: str, allc: List[Candle], spot: float,
+                               lookback: int = 24, touch_atr: float = 0.15):
+    """Return a nearby, repeatedly tested swing level ahead of price, if present.
+
+    Only completed candles are used. A level needs a confirmed two-bar pivot
+    and at least two touches within a small ATR tolerance, reducing noise from
+    isolated wicks. CALL looks for resistance; PUT looks for support.
+    """
+    if len(allc) < 7 or float(spot) <= 0:
+        return None
+    sgn = 1 if str(side).upper() == "CALL" else -1 if str(side).upper() == "PUT" else 0
+    if not sgn:
+        return None
+    bars = list(allc[-max(7, int(lookback)):])
+    av = atr(allc, 14)
+    a = float(av[-1]) if av else 0.0
+    if a <= 0:
+        return None
+    tolerance = max(0.01, float(touch_atr) * a)
+    pivots = []
+    for i in range(2, len(bars) - 2):
+        if sgn > 0:
+            level = float(bars[i].h)
+            pivot = level >= max(float(x.h) for x in bars[i-2:i]) and level >= max(float(x.h) for x in bars[i+1:i+3])
+            ahead = level > float(spot)
+            touches = sum(1 for x in bars if abs(float(x.h) - level) <= tolerance or
+                          float(x.l) - tolerance <= level <= float(x.h) + tolerance)
+        else:
+            level = float(bars[i].l)
+            pivot = level <= min(float(x.l) for x in bars[i-2:i]) and level <= min(float(x.l) for x in bars[i+1:i+3])
+            ahead = level < float(spot)
+            touches = sum(1 for x in bars if abs(float(x.l) - level) <= tolerance or
+                          float(x.l) - tolerance <= level <= float(x.h) + tolerance)
+        if pivot and ahead and touches >= 2:
+            pivots.append(level)
+    if not pivots:
+        return None
+    return min(pivots) if sgn > 0 else max(pivots)

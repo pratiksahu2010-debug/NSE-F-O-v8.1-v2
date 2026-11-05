@@ -17,6 +17,7 @@ from typing import Dict, Optional
 from indicators.core import adx, atr, ema, macd, rsi, vwap
 from models import Candle, Underlying
 from strategies.normal_trend import evaluate_normal_trend_intrabar
+from strategies.simple_signal import evaluate_simple_intrabar
 from utils.market_hours import IST
 
 
@@ -119,7 +120,8 @@ class LiveIntrabarEngine:
 
     def detect(self, und: Underlying, completed_session, completed_all,
                partial: Candle, now: datetime, cfg, allow_sequential: bool = True,
-               allow_mex: bool = True, allow_orb: bool = True) -> Optional[dict]:
+               allow_mex: bool = True, allow_orb: bool = True,
+               allow_simple: bool = False) -> Optional[dict]:
         """Return one early trigger contract, or None. No partial bar enters closed history."""
         if len(completed_all) < max(30, int(getattr(cfg, "V7_MIN_BARS", 50))):
             return None
@@ -267,6 +269,26 @@ class LiveIntrabarEngine:
                 with self._lock:
                     self._normal_stats["priority_superseded"] += 1
 
+        simple_result = None
+        if side is None and allow_simple:
+            simple_result = evaluate_simple_intrabar(
+                completed_session, completed_all, partial,
+                adx_min=float(getattr(cfg, "SIMPLE_ADX_MIN", 25.0)),
+                rsi_call_min=float(getattr(cfg, "SIMPLE_RSI_CALL_MIN", 55.0)),
+                rsi_call_max=float(getattr(cfg, "SIMPLE_RSI_CALL_MAX", 75.0)),
+                rsi_put_max=float(getattr(cfg, "SIMPLE_RSI_PUT_MAX", 45.0)),
+                rsi_put_min=float(getattr(cfg, "SIMPLE_RSI_PUT_MIN", 25.0)),
+                fresh_bars=int(getattr(cfg, "SIMPLE_FRESH_BARS", 3)),
+                min_bars=int(getattr(cfg, "SIMPLE_MIN_BARS", 35)),
+                min_session_bars=int(getattr(cfg, "SIMPLE_MIN_SESSION_BARS", 3)),
+                max_entry_extension_atr=float(getattr(cfg, "SIMPLE_MAX_EXTENSION_ATR", 1.8)),
+            )
+            if simple_result.get("side") in (1, -1):
+                side = "CALL" if simple_result["side"] > 0 else "PUT"
+                strategy = "SIMPLE_TREND"
+                edge = float(partial.c)
+                reason = str(simple_result.get("reason") or "early SIMPLE Normal trigger")
+
         if side is None:
             return None
         # Do not chase an already extended live print.
@@ -290,7 +312,9 @@ class LiveIntrabarEngine:
             "trigger_edge": float(edge), "atr": float(a),
             "timeframe": "5m-intrabar", "setup_id": key,
             "reason": reason, "bar": partial,
-            "metrics": ({**(normal_result.get("metrics") or {}), "normal_setup_type": normal_result.get("setup_type")}
+            "metrics": ({**(simple_result.get("metrics") or {}), "normal_setup_type": simple_result.get("setup_type")}
+                        if strategy == "SIMPLE_TREND" and simple_result else
+                        {**(normal_result.get("metrics") or {}), "normal_setup_type": normal_result.get("setup_type")}
                         if strategy == "NORMAL_TREND" and normal_result else
                         {"adx": float(adx_value), "plus_di": float(plus_di),
                          "minus_di": float(minus_di), "rsi": rsi_value,
