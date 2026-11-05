@@ -121,7 +121,7 @@ def _stage1_fetch_results(pool, symbols, fetcher, timeout_seconds):
 def _normal_15m_context_matches(side: str, htf: int) -> bool:
     """Normal entries require completed 15m trend context in the trade direction."""
     expected = 1 if str(side).upper() == "CALL" else -1 if str(side).upper() == "PUT" else 0
-    return expected != 0 and int(htf or 0) == expected
+    return expected != 0 and int(htf or 0) in (expected, 0)
 
 
 def fresh_reference(earlier: Optional[dict], now: datetime) -> Optional[dict]:
@@ -1587,9 +1587,18 @@ class Scanner:
         # RiskRules still rejects stops outside its permitted ATR envelope.
         stop_dist = invalidation_distance(side, c["session"], c["allc"], spot, strategy)
         lv = self.risk.levels(px, q.delta, a5, contract.tick_size, side, spot, stop_dist)
+        required_rr = max(float(cfg.MIN_RR_T1), float(getattr(cfg, "SIMPLE_MIN_RR_T1", 1.5))) if is_simple else float(cfg.MIN_RR_T1)
         if not lv or float(lv.get("rr", 0.0)) < float(cfg.MIN_RR_T1):
             self._watch(u.name, side, entry_bar.ts, c["ps"], "INVALIDATED", score_10, score_reasons + ["risk/reward validation failed"], now)
             return self._reject("risk levels rejected", u.name, side)
+        if is_simple:
+            underlying_risk = abs(spot - float(lv.get("und_sl") or 0.0))
+            underlying_reward = (float(lv.get("und_t1") or 0.0) - spot) * (1 if side == "CALL" else -1)
+            first_target_rr = underlying_reward / underlying_risk if underlying_risk > 0 else 0.0
+            if underlying_reward <= 0 or first_target_rr < required_rr:
+                detail = f"Normal first-target RR {first_target_rr:.2f} below required {required_rr:.2f}"
+                self._watch(u.name, side_hint, entry_bar.ts, c["ps"], "INVALIDATED", score_10, score_reasons + [detail], now)
+                return self._reject("normal minimum reward/risk", u.name, detail)
         # A repeated swing level immediately ahead of price can cap the realistic
         # first target. Reduce T1 to just before that obstacle, or reject only
         # when the remaining structural reward no longer meets the existing RR.
@@ -1603,9 +1612,9 @@ class Scanner:
                     structural_risk = (spot - float(lv["und_sl"])) * sgn
                     structural_reward = (obstacle_target - spot) * sgn
                     obstacle_rr = structural_reward / structural_risk if structural_risk > 0 else 0.0
-                    if structural_reward <= 0 or obstacle_rr < float(cfg.MIN_RR_T1):
+                    if structural_reward <= 0 or obstacle_rr < required_rr:
                         detail = (f"nearby {'resistance' if sgn > 0 else 'support'} at {obstacle:.2f} "
-                                  f"leaves RR {obstacle_rr:.2f} below {float(cfg.MIN_RR_T1):.2f}")
+                                  f"leaves RR {obstacle_rr:.2f} below {required_rr:.2f}")
                         self._watch(u.name, side, entry_bar.ts, c["ps"], "INVALIDATED",
                                     score_10, score_reasons + [detail], now)
                         return self._reject("nearby structure blocks target", u.name, detail)
@@ -1619,7 +1628,7 @@ class Scanner:
         valid_structure, structure_reason, structure_metrics = validate_entry_candidate(
             entry_candidate, entry_bar, spot, a5,
             cfg.LIVE_MAX_ADVERSE_ATR, cfg.LIVE_MAX_RUNAWAY_ATR,
-            structural_stop=lv.get("und_sl"), target=lv.get("und_t1"), min_rr=cfg.MIN_RR_T1)
+            structural_stop=lv.get("und_sl"), target=lv.get("und_t1"), min_rr=required_rr)
         if not valid_structure:
             self._watch(u.name, side_hint, entry_bar.ts, c["ps"], "INVALIDATED",
                         score_10, score_reasons + [structure_reason], now)
