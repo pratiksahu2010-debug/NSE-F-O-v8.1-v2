@@ -88,8 +88,11 @@ class SignalPipeline:
             group.sort(key=self._rank, reverse=True)
             winner = group[0]
             if len(group) > 1:
-                runner_up = group[1]
-                if winner.side != runner_up.side and winner.score - runner_up.score < self.config.conflict_score_margin:
+                # Compare opposing candidates of the same confirmation class.
+                # An early intrabar preview must never veto a closed-bar signal.
+                opposing = next((x for x in group[1:]
+                                 if x.candle_state is winner.candle_state and x.side != winner.side), None)
+                if opposing is not None and winner.score - opposing.score < self.config.conflict_score_margin:
                     rejected.extend(SignalDecision(x, DecisionState.REJECTED, x.identity,
                                       ("directional_conflict_no_clear_winner",)) for x in group)
                     continue
