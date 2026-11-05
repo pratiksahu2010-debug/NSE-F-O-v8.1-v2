@@ -50,7 +50,7 @@ def calculate(candles: Sequence, session_candles: Sequence | None = None) -> Dic
     vw = vwap(session_legacy)
     out["session_vwap"] = vw[-1] if vw else None
     out["vwap_slope_3"] = (vw[-1] - vw[-4]) if len(vw) >= 4 else None
-    out["rvol_20"] = vol_ratio(legacy, 20)
+    out["rvol_20"] = vol_ratio(legacy, 20) if len(bars) >= 21 else None
 
     last = legacy[-1]
     out["candle_body_fraction"] = body_frac(last)
@@ -74,7 +74,7 @@ def calculate(candles: Sequence, session_candles: Sequence | None = None) -> Dic
         out["bb_mid_20"] = out["bb_upper_20_2"] = out["bb_lower_20_2"] = out["bb_width_pct"] = None
 
     # OBV is cumulative direction-weighted volume; None when volume is unavailable.
-    if len(bars) >= 2 and any(v > 0 for v in volumes):
+    if len(bars) >= 21 and all(v > 0 for v in volumes[-21:]):
         obv = 0.0
         for i in range(1, len(bars)):
             if closes[i] > closes[i - 1]:
