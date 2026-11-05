@@ -64,17 +64,6 @@ class Config:
     # Indices are discovered from the NSE_FO master (every index that has futures/options).
     # This list is only a fallback label set and is not used to filter.
     INDEX_NAMES = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "NIFTYNXT50"]
-    TOP_STOCKS = _env("TOP_STOCKS", 40, int)  # liquidity-ranked F&O stocks, capped by MAX_UNDERLYING_SYMBOLS
-    MAX_UNDERLYING_SYMBOLS = _env("MAX_UNDERLYING_SYMBOLS", 90, int)  # room for indices + dedicated 80-name MEX universe
-    # These are priority candidates, not hardcoded eligibility: they are included only if the current NSE F&O master
-    # contains a valid tradable future/option universe for them. Override with comma-separated PRIORITY_STOCKS.
-    PRIORITY_STOCKS = [x.strip().upper() for x in _env(
-        "PRIORITY_STOCKS",
-        "HDFCBANK,ICICIBANK,SBIN,AXISBANK,KOTAKBANK,BAJFINANCE,BAJAJFINSV,SHRIRAMFIN,CHOLAFIN,"
-        "INDUSINDBK,RELIANCE,INFY,TCS,LT,BHARTIARTL,ITC,HINDUNILVR,MARUTI,M&M,TATAMOTORS,"
-        "TATASTEEL,JSWSTEEL,HINDALCO,VEDL,BEL,HAL,TRENT,ETERNAL,ONGC,NTPC,POWERGRID,COALINDIA"
-    ).split(",") if x.strip()]
-    UNIVERSE_CACHE_DAYS = 7
 
     # ---- scan ----
     SCAN_MINUTES = 5
@@ -196,7 +185,6 @@ class Config:
     MEX_ORB_SCORE_MIN = _env("MEX_ORB_SCORE_MIN", 70.0, float)
     # Per-strategy floors are disabled: all strategies use ALERT_SCORE_MIN only.
     STRATEGY_SCORE_MIN = ""
-    UNIVERSE_RERANK_HOURS = _env("UNIVERSE_RERANK_HOURS", 24.0, float)  # cached liquidity ranking is recomputed after this
     ORB_BARS = 3                  # opening range = first 3 five-minute candles (09:15-09:30)
     ORB_LAST_TIME = MEX_ORB_LAST_TIME  # fresh ORB breaks allowed through the normal signal cutoff
     ORB_MIN_RANGE_ATR, ORB_MAX_RANGE_ATR = 0.6, 3.5
@@ -331,22 +319,11 @@ class Config:
     ENTRY_BAND_DOWN = 0.002
     ENTRY_BAND_UP = 0.004
     VALID_MINUTES = 10
-    SYMBOL_COOLDOWN_MIN = _env("SYMBOL_COOLDOWN_MIN", 0, int)  # no time cooldown; active-signal and quality guards prevent duplicates
     SCAN_DIGEST_EVERY = _env("SCAN_DIGEST_EVERY", 6, int)   # Telegram 'why no signal' digest every N scans without a signal (0 = off)
     PING_RUNS_TICK = False  # compatibility only; /ping is always keep-alive-only
     TRACK_INTERVAL_SEC = 4
     REST_PREMIUM_REFRESH_SEC = 20
 
-    # correlation groups (extend as needed)
-    GROUPS = {
-        "BANK": ["BANKNIFTY", "HDFCBANK", "ICICIBANK", "SBIN", "AXISBANK", "KOTAKBANK", "INDUSINDBK", "BANDHANBNK",
-                 "FEDERALBNK", "IDFCFIRSTB", "PNB", "BANKBARODA", "AUBANK"],
-        "IT": ["TCS", "INFY", "WIPRO", "HCLTECH", "TECHM", "LTIM", "PERSISTENT", "COFORGE", "MPHASIS"],
-        "AUTO": ["MARUTI", "TATAMOTORS", "M&M", "BAJAJ-AUTO", "EICHERMOT", "HEROMOTOCO", "TVSMOTOR", "ASHOKLEY"],
-        "METAL": ["TATASTEEL", "JSWSTEEL", "HINDALCO", "VEDL", "JINDALSTEL", "SAIL", "NMDC"],
-        "ENERGY": ["RELIANCE", "ONGC", "BPCL", "IOC", "GAIL", "NTPC", "POWERGRID", "COALINDIA"],
-        "FIN": ["FINNIFTY", "BAJFINANCE", "BAJAJFINSV", "HDFCLIFE", "SBILIFE", "CHOLAFIN", "SHRIRAMFIN"],
-    }
 
     UPSTOX_VIX_KEY = "NSE_INDEX|India VIX"
     DHAN_VIX_ID = 21
