@@ -190,8 +190,8 @@ class LiveIntrabarEngine:
             range_ok = float(getattr(cfg, "ORB_MIN_RANGE_ATR", 0.6)) * a <= orb_width <= float(getattr(cfg, "ORB_MAX_RANGE_ATR", 3.5)) * a
             after_open = [x for x in completed_session if x.ts > opening[-1].ts]
             previous_close = float(after_open[-1].c) if after_open else float(opening[-1].c)
-            body_min = float(getattr(cfg, "MEX_ORB_BODY_MIN", 0.55))
-            close_threshold = float(getattr(cfg, "MEX_ORB_CLOSE_POS", 0.75))
+            body_min = float(getattr(cfg, "MEX_ORB_BODY_MIN", 0.50))
+            close_threshold = float(getattr(cfg, "MEX_ORB_CLOSE_POS", 0.65))
             clearance_min = float(getattr(cfg, "MEX_ORB_CLEARANCE_ATR", 0.05))
             extension_max = float(getattr(cfg, "MEX_ORB_MAX_EXTENSION_ATR", 1.5))
             call_clearance = (partial.c - orb_hi) / a
