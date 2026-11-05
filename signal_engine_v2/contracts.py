@@ -59,9 +59,12 @@ def validate_option_quote(quote: OptionQuote, underlying: Underlying,
     if quote.volume / lot < cfg.MIN_VOLUME_LOTS[kind]:
         return False, "traded_volume_below_minimum"
     if policy.require_delta:
-        if quote.delta is None or not 0 < abs(float(quote.delta)) <= 1:
+        try:
+            delta = abs(float(quote.delta))
+        except (TypeError, ValueError, OverflowError):
             return False, "greeks_delta_missing_or_invalid"
-        delta = abs(float(quote.delta))
+        if not 0 < delta <= 1:
+            return False, "greeks_delta_missing_or_invalid"
         if not float(cfg.MIN_OPTION_DELTA) <= delta <= float(cfg.MAX_OPTION_DELTA):
             return False, "delta_outside_configured_range"
     return True, ""
@@ -80,6 +83,9 @@ def select_validated_contract(master, underlying: Underlying, side: str,
         return None, "unsupported_underlying_kind"
     if chain.underlying.upper() != underlying.name.upper():
         return None, "chain_underlying_mismatch"
+    minimum_dte = cfg.INDEX_MIN_DTE if underlying.kind.upper() == "INDEX" else cfg.STOCK_MIN_DTE
+    if (chain.expiry - now.date()).days < minimum_dte:
+        return None, "expiry_too_near_or_expired"
     if policy.require_chain_timestamp:
         if chain.ts is None:
             return None, "chain_timestamp_missing"
@@ -133,13 +139,17 @@ def build_option_risk_levels(selection: ContractSelection, side: str,
     Missing delta is a hard rejection here; no assumed 0.5 delta fallback.
     """
     quote, contract = selection.quote, selection.contract
-    if quote.delta is None or not 0 < abs(float(quote.delta)) <= 1:
+    try:
+        delta = abs(float(quote.delta))
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not 0 < delta <= 1:
         return None
     stop_distance = abs(float(underlying_entry) - float(underlying_stop))
     if stop_distance <= 0:
         return None
     return RiskRules.levels(
-        ltp=float(quote.ask), delta=float(quote.delta), atr_val=float(atr_value),
+        ltp=float(quote.ask), delta=delta, atr_val=float(atr_value),
         tick=float(contract.tick_size), side=side, spot=float(underlying_entry),
         stop_dist=stop_distance, min_target_rr=min_target_rr
     )
