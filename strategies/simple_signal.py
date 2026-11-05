@@ -53,6 +53,7 @@ def evaluate_simple(
     fresh_bars: int = 3,
     min_bars: int = 40,
     min_session_bars: int = 3,
+    max_entry_extension_atr: float = 1.8,
 ) -> dict:
     """Evaluate the latest closed candle. Returns the same dict shape as the other strategy engines."""
     fresh_bars = max(1, int(fresh_bars))
@@ -103,6 +104,10 @@ def evaluate_simple(
                 f"ADX {ax:.0f} (+DI {pdi:.0f}/-DI {ndi:.0f}), ATR {a_now:.2f}")
     if a_now <= 0:
         return _empty("ATR unavailable", ["atr_unavailable"], metrics)
+    extension_call = (float(last.c) - float(e9[-1])) / a_now
+    extension_put = (float(e9[-1]) - float(last.c)) / a_now
+    metrics["ema9_extension_atr"] = round(max(extension_call, extension_put), 4)
+    metrics["max_entry_extension_atr"] = float(max_entry_extension_atr)
 
     window = min(fresh_bars + 1, n_bars)
     gate_results: Dict[str, Dict[str, bool]] = {}
@@ -111,6 +116,10 @@ def evaluate_simple(
         history = [components(side, -k) for k in range(window, 0, -1)]      # oldest ... newest
         gate_results[side] = history[-1]
         if not all(history[-1].values()):
+            continue
+        directional_extension = extension_call if side == "CALL" else extension_put
+        if directional_extension > float(max_entry_extension_atr):
+            not_fresh[side] = -1
             continue
         run = 0
         for k in range(1, n_bars + 1):                                     # consecutive true candles ending now
@@ -138,10 +147,109 @@ def evaluate_simple(
     best = "CALL" if passed("CALL") >= passed("PUT") else "PUT"
     failures = [f"{best}:{name}" for name, ok in gate_results[best].items() if not ok]
     for side, run in not_fresh.items():
-        failures.append(f"{side}:not_fresh")
-        metrics.setdefault("stale_signal_bars", {})[side] = run
+        if run == -1:
+            failures.append(f"{side}:extended_from_ema9")
+            metrics.setdefault("extension_rejections", []).append(side)
+        else:
+            failures.append(f"{side}:not_fresh")
+            metrics.setdefault("stale_signal_bars", {})[side] = run
         best = side
     reason = "no trigger | " + snapshot
     if failures:
         reason += " | " + ",".join(failures)
     return _empty(reason, failures, metrics, gate_results)
+
+
+def evaluate_simple_intrabar(
+    session: List[Candle],
+    completed_candles: List[Candle],
+    partial_candle: Candle,
+    *,
+    adx_min: float = 25.0,
+    rsi_call_min: float = 55.0,
+    rsi_call_max: float = 75.0,
+    rsi_put_max: float = 45.0,
+    rsi_put_min: float = 25.0,
+    fresh_bars: int = 3,
+    min_bars: int = 35,
+    min_session_bars: int = 3,
+    max_entry_extension_atr: float = 1.8,
+) -> dict:
+    """Evaluate the SIMPLE EMA/VWAP/RSI/ADX rules on a live partial 5m candle.
+
+    The partial candle is never inserted into persisted/closed history. No MACD,
+    candle-colour/body, DI-direction, sector or NIFTY agreement gate is added.
+    """
+    if len(session) < int(min_session_bars):
+        return _empty("few session bars", ["session_bars"])
+    if len(completed_candles) < int(min_bars):
+        return _empty("insufficient indicator history", ["history"])
+    if partial_candle.ts <= completed_candles[-1].ts:
+        return _empty("live candle timestamp is not newer than closed history", ["live_timestamp"])
+
+    closed_result = evaluate_simple(
+        session, completed_candles, adx_min=adx_min,
+        rsi_call_min=rsi_call_min, rsi_call_max=rsi_call_max,
+        rsi_put_max=rsi_put_max, rsi_put_min=rsi_put_min,
+        fresh_bars=fresh_bars, min_bars=min_bars,
+        min_session_bars=min_session_bars,
+        max_entry_extension_atr=max_entry_extension_atr,
+    )
+    combined = list(completed_candles) + [partial_candle]
+    closes = [float(c.c) for c in combined]
+    e9, e21 = ema(closes, 9), ema(closes, 21)
+    rsi_values, adx_values, atr_values = rsi(closes, 14), adx(combined, 14), atr(combined, 14)
+    vw_values = vwap(session)
+    if not all((e9, e21, rsi_values, adx_values, atr_values, vw_values)):
+        return _empty("live indicator series unavailable", ["indicator_warmup"])
+    try:
+        ax, pdi, ndi = (float(x) for x in adx_values[-1])
+        rv = float(rsi_values[-1])
+        av = float(atr_values[-1])
+        vw = float(vw_values[-1])
+    except (TypeError, ValueError, IndexError):
+        return _empty("live indicator values unavailable", ["indicator_values"])
+    if av <= 0 or vw <= 0:
+        return _empty("live ATR/VWAP unavailable", ["live_reference"])
+    price = float(partial_candle.c)
+    ext_call = (price - float(e9[-1])) / av
+    ext_put = (float(e9[-1]) - price) / av
+    common = {
+        "price": price, "ema9": float(e9[-1]), "ema21": float(e21[-1]),
+        "vwap": vw, "rsi": rv, "adx": ax, "plus_di": pdi,
+        "minus_di": ndi, "atr": av,
+        "ema9_extension_atr": round(max(ext_call, ext_put), 4),
+        "max_entry_extension_atr": float(max_entry_extension_atr),
+        "mode": "INTRABAR",
+    }
+
+    # Do not re-enter a state that has already remained fully aligned beyond
+    # the configured freshness window on completed bars.
+    stale = (closed_result.get("metrics") or {}).get("stale_signal_bars", {})
+    candidates = (
+        ("CALL", 1, e9[-1] > e21[-1] and price > vw and
+         float(rsi_call_min) <= rv <= float(rsi_call_max) and ax >= float(adx_min),
+         ext_call, "LONG"),
+        ("PUT", -1, e9[-1] < e21[-1] and price < vw and
+         float(rsi_put_min) <= rv <= float(rsi_put_max) and ax >= float(adx_min),
+         ext_put, "SHORT"),
+    )
+    for side, sign, aligned, extension, label in candidates:
+        if not aligned or side in stale or extension > float(max_entry_extension_atr):
+            continue
+        reason = (f"EARLY {label} Normal trigger: EMA9/21 aligned, price on correct VWAP side, "
+                  f"RSI {rv:.1f}, ADX {ax:.1f}; live 5m candle, extension {extension:.2f} ATR")
+        return {
+            "side": sign, "score": 1.0, "setup_type": SETUP_TYPE,
+            "reason": reason, "gate_results": {side: {"ema": True, "vwap": True, "rsi": True, "adx": True}},
+            "gate_failures": [], "metrics": {**common, "trigger_edge": float(e9[-1])},
+        }
+    failures = []
+    for side, sign, aligned, extension, _ in candidates:
+        if not aligned:
+            failures.extend([f"{side}:ema_vwap_rsi_adx_not_aligned"])
+        elif side in stale:
+            failures.append(f"{side}:not_fresh")
+        elif extension > float(max_entry_extension_atr):
+            failures.append(f"{side}:extended_from_ema9")
+    return _empty("no live SIMPLE trigger", failures, common)
