@@ -162,6 +162,7 @@ class Scanner:
             min_score=float(cfg.V2_MIN_SCORE),
             min_risk_reward=float(cfg.V2_MIN_RR),
             min_history_bars=int(cfg.V2_MIN_HISTORY_BARS),
+            min_adx=22.0,
         ))
         self._v2_preview_lock = threading.Lock()
         self._v2_early_previews = {}
@@ -457,6 +458,8 @@ class Scanner:
                     live_candle=partial, futures_volume_by_timestamp=volume_map,
                     session_candles=cached["session"],
                     metadata={"market_bias": self.mkt_bias, "group": und.group,
+                              "underlying_return_pct": ctx.session_return_pct(cached["session"]),
+                              "index_return_pct": self.mkt_ret,
                               "provider": getattr(self.fo, "active_name", "UPSTOX")},
                 )
                 early = [d for d in decisions if d.state is V2DecisionState.EARLY]
@@ -895,6 +898,8 @@ class Scanner:
                         futures_volume_by_timestamp=volume_map,
                         session_candles=session,
                         metadata={"market_bias": self.mkt_bias, "group": u.group,
+                                  "underlying_return_pct": ctx.session_return_pct(session),
+                                  "index_return_pct": self.mkt_ret,
                                   "provider": getattr(self.fo, "active_name", "UPSTOX")},
                     )
                     eligible = [d for d in decisions if d.state in (
@@ -1216,6 +1221,8 @@ class Scanner:
             "profile": "BALANCED_HYBRID",
             "strategy_count": 9,
             "min_score": float(cfg.V2_MIN_SCORE),
+            "min_adx": 22.0,
+            "max_entry_extension_atr": 1.25,
             "min_risk_reward": float(cfg.V2_MIN_RR),
             "min_history_bars": max(220, int(cfg.V2_MIN_HISTORY_BARS)),
             "intrabar_enabled": bool(cfg.LIVE_INTRABAR_ENABLED),
