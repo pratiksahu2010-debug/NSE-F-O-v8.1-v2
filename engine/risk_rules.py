@@ -67,7 +67,7 @@ class RiskRules:
         if risk <= 0:
             return None
         rr1, rr2 = (t1 - ltp) / risk, (t2 - ltp) / risk
-        if rr1 < float(cfg.MIN_RR_T1):
+        if rr1 + 1e-9 < float(cfg.MIN_RR_T1):
             return None
         return {
             "sl": sl, "t1": t1, "t2": t2, "rr": rr2,
