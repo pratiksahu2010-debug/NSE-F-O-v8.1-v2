@@ -882,7 +882,7 @@ class Bot:
             "normal_diagnostics": ["scanned", "detected", "selected", "priority_superseded",
                                    "no_trigger", "setups", "gate_failures", "per_symbol_latest"],
             "normal_15m_context": normal_15m_context,
-            "normal_fixed_stock_universe": 50,
+            "normal_fixed_stock_universe": len(NORMAL_SYMBOLS),
             "orb_engine": cfg.MOMENTUM_ORB_ENABLED,
             "orb_fixed_universe": 100,
             "orb_opening_range": "09:15-09:30",
