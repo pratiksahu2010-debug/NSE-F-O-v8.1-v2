@@ -126,7 +126,8 @@ def score_candidate(candidate: Candidate, snapshot: MarketSnapshot):
 
     breakdown = ScoreBreakdown(setup, trend, vwap_score, adx_score, volume_score,
                                momentum, htf_score, candle_score, volatility)
+    grade = "A+" if breakdown.total >= 85 else "A" if breakdown.total >= 75 else "B" if breakdown.total >= 65 else "REJECT"
     enriched = replace(candidate, score=breakdown.total,
                        metadata={**dict(candidate.metadata), "score_breakdown": breakdown.as_dict(),
-                                 "strategy_raw_score": candidate.score})
+                                 "strategy_raw_score": candidate.score, "grade": grade})
     return enriched, breakdown
