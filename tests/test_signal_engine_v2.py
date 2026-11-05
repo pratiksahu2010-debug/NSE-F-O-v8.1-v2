@@ -43,7 +43,8 @@ def test_intrabar_candidate_is_explicitly_early():
 
 
 def test_low_score_is_rejected():
-    pipe = SignalPipeline([FixedStrategy("momentum", [candidate(score=64)])])
+    pipe = SignalPipeline([FixedStrategy("momentum", [candidate(score=64)])],
+                          EngineConfig(unified_scoring_enabled=False))
     decisions = pipe.evaluate(snapshot())
     assert any("score_below_minimum" in x.rejected_reasons for x in decisions)
 
