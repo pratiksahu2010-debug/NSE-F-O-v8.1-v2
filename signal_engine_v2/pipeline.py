@@ -120,7 +120,7 @@ class SignalPipeline:
         return rejected + fresh
 
     def release(self, decision: SignalDecision) -> None:
-        """Allow a same-candle retry when a downstream risk/contract gate fails."""
+        """Allow a same-candle retry when downstream contract validation fails."""
         dedup_key = decision.decision_key + "|" + decision.state.value
         with self._lock:
             self._emitted.discard(dedup_key)
