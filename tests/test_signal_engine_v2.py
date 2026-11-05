@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from dataclasses import replace
 
 from signal_engine_v2 import EngineConfig, SignalPipeline
 from signal_engine_v2.models import (Candidate, Candle, CandleState, MarketSnapshot,
@@ -70,3 +71,30 @@ def test_repeated_scan_is_deduplicated():
     pipe = SignalPipeline([FixedStrategy("momentum", [candidate()])])
     assert len([x for x in pipe.evaluate(snapshot()) if x.state is DecisionState.CONFIRMED]) == 1
     assert len([x for x in pipe.evaluate(snapshot()) if x.state is DecisionState.CONFIRMED]) == 0
+
+def test_adx_below_22_is_hard_rejected_even_with_high_score():
+    snap = snapshot()
+    snap = replace(snap, indicators={**snap.indicators, "adx_14": 21.99})
+    pipe = SignalPipeline([FixedStrategy("momentum", [candidate(score=95)])],
+                          EngineConfig(unified_scoring_enabled=False))
+    decisions = pipe.evaluate(snap)
+    assert any("adx_below_minimum_22" in x.rejected_reasons for x in decisions)
+    assert not any(x.state is not DecisionState.REJECTED for x in decisions)
+
+
+def test_adx_exactly_22_passes_hard_floor():
+    snap = snapshot()
+    snap = replace(snap, indicators={**snap.indicators, "adx_14": 22.0})
+    pipe = SignalPipeline([FixedStrategy("momentum", [candidate(score=95)])],
+                          EngineConfig(unified_scoring_enabled=False))
+    decisions = pipe.evaluate(snap)
+    assert any(x.state is DecisionState.CONFIRMED for x in decisions)
+
+
+def test_overextended_entry_is_rejected():
+    snap = snapshot()
+    snap = replace(snap, indicators={**snap.indicators, "ema_21": 90.0, "atr_14": 2.0})
+    pipe = SignalPipeline([FixedStrategy("momentum", [candidate(score=95)])],
+                          EngineConfig(unified_scoring_enabled=False, max_entry_extension_atr=1.25))
+    decisions = pipe.evaluate(snap)
+    assert any("entry_overextended_from_ema21" in x.rejected_reasons for x in decisions)
