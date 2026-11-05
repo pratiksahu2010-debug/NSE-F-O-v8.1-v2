@@ -373,6 +373,10 @@ def test_simple_live_detector_uses_simple_history_floor_not_v7_floor():
     assert result is not None
     assert result["strategy"] == "SIMPLE_TREND"
     assert result["side"] == "CALL"
+    live_stats = engine.normal_snapshot()
+    assert live_stats["evaluated"] == 1
+    assert live_stats["detected"] == 1
+    assert live_stats["setups"]["SIMPLE_TREND"] == 1
 
 
 def test_simple_live_candidate_dispatch_accepts_simple_trend_strategy():
