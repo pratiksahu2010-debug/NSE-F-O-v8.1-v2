@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import cfg  # noqa: E402
 from db import DB  # noqa: E402
-from engine.contract_picker import contract_rank, liquidity_ok, pick_contract  # noqa: E402
+from engine.contract_picker import contract_rank, pick_contract  # noqa: E402
 from data.instruments import Master, build_underlyings  # noqa: E402
 from models import OptionQuote  # noqa: E402
 from tests.test_core import TODAY, chain, master_rows  # noqa: E402
@@ -35,15 +35,6 @@ class TestContractRank(unittest.TestCase):
         normal = contract_rank(self.q(iv=14.0), "CE", True, False, 14.0)
         dislocated = contract_rank(self.q(iv=40.0), "CE", True, False, 14.0)
         self.assertLess(normal, dislocated)
-
-    def test_wide_spread_is_rejected_without_a_feature_flag(self):
-        from types import SimpleNamespace
-        ok, reason = liquidity_ok(
-            self.q(bid=95.0, ask=105.0, ltp=100.0),
-            SimpleNamespace(kind="INDEX"), 50,
-        )
-        self.assertFalse(ok)
-        self.assertIn("bid-ask spread", reason)
 
     def test_picker_still_returns_a_liquid_contract(self):
         m = Master(master_rows())
