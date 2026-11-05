@@ -164,6 +164,8 @@ class Scanner:
             min_risk_reward=float(cfg.V2_MIN_RR),
             min_history_bars=int(cfg.V2_MIN_HISTORY_BARS),
         ))
+        self._v2_preview_lock = threading.Lock()
+        self._v2_early_previews = {}
         self.ban: Set[str] = set()
         self.last_stats = {}
         self.last_cycle_at: Optional[str] = None
@@ -800,6 +802,14 @@ class Scanner:
 
     def stage1(self, now: datetime):
         self._scan_now = now
+        with self._v2_preview_lock:
+            for preview_key, preview in list(self._v2_early_previews.items()):
+                try:
+                    preview_at = datetime.fromisoformat(preview["candle_ts"])
+                    if (now - preview_at).total_seconds() > 15 * 60:
+                        self._v2_early_previews.pop(preview_key, None)
+                except (TypeError, ValueError, KeyError):
+                    self._v2_early_previews.pop(preview_key, None)
         with self._ready_lock:
             self._ready_state = {"ready": False, "gave_up": False}
         with self._backfill_lock:
@@ -1866,6 +1876,18 @@ class Scanner:
         signal_candle_ts = entry_bar.ts
         intrabar_entry = str((entry_candidate or {}).get("mode", "")).upper() == "INTRABAR"
         candle_identity = signal_candle_ts.strftime("%Y%m%dT%H%M%S")
+        preview_key = (u.name, signal_candle_ts.isoformat())
+        if is_v2 and not intrabar_entry:
+            with self._v2_preview_lock:
+                earlier_preview = self._v2_early_previews.pop(preview_key, None)
+            if earlier_preview:
+                if earlier_preview.get("side") == side:
+                    score_reasons.append("Earlier provisional intrabar preview was confirmed by this closed candle")
+                else:
+                    score_reasons.append(
+                        f"Closed candle reversed earlier provisional {earlier_preview.get('side')} preview; "
+                        "closed-bar direction takes priority"
+                    )
         signal_timestamp = (datetime.fromisoformat(entry_candidate["confirmation_time"])
                             if intrabar_entry else signal_candle_ts + timedelta(minutes=cfg.SCAN_MINUTES))
         sig = Signal(
@@ -1913,6 +1935,12 @@ class Scanner:
                  sig.id, not preview_only, preview_only, bool(telegram_acknowledged))
         if preview_only and not telegram_acknowledged:
             return None
+        if preview_only:
+            with self._v2_preview_lock:
+                self._v2_early_previews[preview_key] = {
+                    "side": side, "score": float(c["v2_candidate"].score),
+                    "candle_ts": signal_candle_ts.isoformat(),
+                }
         log.info("SIGNAL %s %s %s %s score=%.2f/10", sig.underlying, sig.side, sig.contract, strategy, conf)
         return sig
 
