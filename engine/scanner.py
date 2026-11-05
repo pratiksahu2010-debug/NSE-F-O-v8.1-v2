@@ -628,6 +628,8 @@ class Scanner:
 
     # ---------------- stage 1 ----------------
     def _required_history_bars(self) -> int:
+        if cfg.V2_ENGINE_ENABLED:
+            return max(220, int(cfg.V2_MIN_HISTORY_BARS))
         return int(cfg.SIMPLE_MIN_BARS) if cfg.STRATEGY_MODE != "LEGACY" else int(cfg.V7_MIN_BARS)
 
     @staticmethod
