@@ -51,8 +51,7 @@ class TestMomentumExplosion(unittest.TestCase):
             self.assertTrue(details.get("gate_failures"))
             self.assertEqual(set(details["gate_results"]), {
                 "fresh_boundary_break", "strong_close", "not_overextended",
-                "minimum_directional_impulse", "macd_turn_or_directional_alignment",
-                "minimum_range_expansion",
+                "minimum_directional_impulse", "minimum_range_expansion",
             })
 
     def test_missing_relative_volume_is_diagnostic_not_a_hard_gate(self):
