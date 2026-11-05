@@ -1,7 +1,8 @@
-"""Dedicated Momentum Explosion + Opening Range Breakout engine.
+"""Dedicated Opening Range Breakout engine.
 
-The engine has its own indicator calculation and one-candle breakout/retest
-lifecycle. It only consumes completed 5-minute candles and never places orders.
+The closed-candle scorer and persisted optional retest lifecycle operate on
+completed 5-minute candles. The separate live partial-candle ORB trigger is
+implemented in engine.live_intrabar. Neither path places orders.
 """
 from __future__ import annotations
 
