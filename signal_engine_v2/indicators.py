@@ -117,9 +117,11 @@ def enrich_snapshot(snapshot, session_candles=None):
         bar for bar in closed if bar.timestamp.date() == snapshot.candle.timestamp.date()
     ]
     values = calculate(closed, session)
-    # Index futures volume is available for the current session, not all prior
-    # index history. Use session RVOL only when a full baseline is present.
+    # Index spot has no true traded volume. Never let the partial history
+    # accidentally satisfy RVOL using only a handful of current-session bars.
     session_legacy = _legacy(session)
+    if str(snapshot.instrument_kind).upper() == "INDEX":
+        values["rvol_20"] = None
     if len(session_legacy) >= 21 and all(x.v > 0 for x in session_legacy[-21:]):
         values["rvol_20"] = vol_ratio(session_legacy, 20)
     return replace(snapshot, indicators=values)
