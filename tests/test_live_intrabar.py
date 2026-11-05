@@ -248,7 +248,7 @@ def _live_detector_fixture():
     return now, session, prior + session
 
 
-def test_live_orb_triggers_on_partial_breakout_with_55_percent_body_and_75_percent_close():
+def test_live_orb_triggers_on_partial_breakout_with_50_percent_body_and_65_percent_close():
     from types import SimpleNamespace
     from unittest.mock import patch
     from engine import live_intrabar as live_module
@@ -261,7 +261,7 @@ def test_live_orb_triggers_on_partial_breakout_with_55_percent_body_and_75_perce
         V7_MIN_BARS=50, MOMENTUM_ORB_ENABLED=True, MEX_ENABLED=False,
         MEX_ORB_LAST_TIME=(14, 45), ORB_BARS=3,
         ORB_MIN_RANGE_ATR=0.6, ORB_MAX_RANGE_ATR=3.5,
-        MEX_ORB_BODY_MIN=0.55, MEX_ORB_CLOSE_POS=0.75,
+        MEX_ORB_BODY_MIN=0.50, MEX_ORB_CLOSE_POS=0.65,
         MEX_ORB_CLEARANCE_ATR=0.05, MEX_ORB_MAX_EXTENSION_ATR=1.5,
         LIVE_MAX_RUNAWAY_ATR=0.8,
     )
@@ -280,8 +280,8 @@ def test_live_orb_triggers_on_partial_breakout_with_55_percent_body_and_75_perce
     assert result is not None
     assert result["strategy"] == "MOMENTUM_ORB"
     assert result["side"] == "CALL"
-    assert result["metrics"]["body_fraction"] >= 0.55
-    assert result["metrics"]["close_position"] >= 0.75
+    assert result["metrics"]["body_fraction"] >= 0.50
+    assert result["metrics"]["close_position"] >= 0.65
 
 
 def test_live_mex_uses_configured_impulse_and_range_expansion_without_macd_veto():
