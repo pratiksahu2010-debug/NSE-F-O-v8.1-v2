@@ -32,7 +32,7 @@ class MomentumORBTests(unittest.TestCase):
         last_ts = start + timedelta(minutes=5 * 39)
         candles.append(Candle(last_ts, 102.0, 102.8, 101.9, 102.7, 1800))
         with (
-            patch.object(momentum_orb, "atr", return_value=[1.0]),
+            patch.object(momentum_orb, "atr", return_value=[1.2]),
             patch.object(momentum_orb, "ema", return_value=[102.0]),
             patch.object(cfg, "MOMENTUM_ORB_ENABLED", True),
             patch.object(cfg, "MEX_ORB_BODY_MIN", 0.55),
