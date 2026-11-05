@@ -1871,13 +1871,23 @@ class Scanner:
             valid_till=valid_till, exit_by=exit_by, cost_lot=px * lot, max_loss_lot=max_loss_per_lot, rr=lv["rr"],
             delta=q.delta, theta=q.theta, iv=q.iv, iv_rank=ivr, spread_pct=q.spread_pct, oi=q.oi, volume=q.volume,
             pcr=chain.pcr, support=sup[0] if sup else 0, resistance=res[0] if res else 0, dte=(expiry - today).days,
-            confidence=conf, agree=agree, reasons=reasons, strategy=strategy, tier=tier, kind=u.kind, cur_sl=lv["sl"], prem_high=px, provider=self.fo.active_name)
-        self._watch(u.name, side, entry_bar.ts, c["ps"], "CONFIRMED", score_10, score_reasons, now)
+            confidence=conf, agree=agree, reasons=reasons, strategy=strategy, tier=tier,
+            kind=u.kind, cur_sl=lv["sl"], prem_high=px, provider=self.fo.active_name,
+            status="EARLY" if (is_v2 and intrabar_entry) else "ACTIVE")
+        self._watch(u.name, side, entry_bar.ts, c["ps"],
+                    "EARLY_PREVIEW" if (is_v2 and intrabar_entry) else "CONFIRMED",
+                    score_10, score_reasons, now)
         dedupe_key = f"alert:{signal_candle_ts.date().isoformat()}:{u.name}:{candle_identity}:{side}"
+        if is_v2:
+            dedupe_key += ":EARLY" if intrabar_entry else ":CONFIRMED"
         if self._already_alerted(dedupe_key):
             return self._reject("duplicate alert suppressed", u.name, sig.id)
-        self.db.save_signal(sig)
+        preview_only = bool(is_v2 and intrabar_entry)
+        if not preview_only:
+            self.db.save_signal(sig)
         try:      # features for tools/calibrate.py: what the signal looked like when it fired
+            if preview_only:
+                raise StopIteration("intrabar preview is not persisted as a tracked signal")
             feats = dict(gate.get("metrics", {}))
             if is_v7_sequential:
                 feats["v7_sequential"] = v7_decision.metrics
@@ -1889,10 +1899,11 @@ class Scanner:
             self.db.save_features(sig.id, sig.ts[:10], feats)
         except Exception:
             log.exception("signal feature logging failed")
-        self.tracker.add(sig, contract)
+        if not preview_only:
+            self.tracker.add(sig, contract)
         telegram_acknowledged = self._queue_signal_alert(sig, dedupe_key, format_signal(sig), now)
-        log.info("signal lifecycle | signal_id=%s | database_saved=true | telegram_acknowledged=%s",
-                 sig.id, bool(telegram_acknowledged))
+        log.info("signal lifecycle | signal_id=%s | database_saved=%s | preview_only=%s | telegram_acknowledged=%s",
+                 sig.id, not preview_only, preview_only, bool(telegram_acknowledged))
         log.info("SIGNAL %s %s %s %s score=%.2f/10", sig.underlying, sig.side, sig.contract, strategy, conf)
         return sig
 
