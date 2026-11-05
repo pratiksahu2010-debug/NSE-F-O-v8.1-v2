@@ -7,3 +7,6 @@ from .models import Candidate, Candle, MarketSnapshot, SignalDecision
 from .pipeline import SignalPipeline
 
 __all__ = ["EngineConfig", "Candidate", "Candle", "MarketSnapshot", "SignalDecision", "SignalPipeline"]
+
+from .strategies import default_strategies
+__all__.append("default_strategies")
