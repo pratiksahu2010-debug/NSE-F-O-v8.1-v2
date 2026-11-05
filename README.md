@@ -49,8 +49,8 @@ Hybrid entry handling:
 V2 option selection validates index/stock spread limits, executable bid/ask, one-lot
 market depth, OI and volume in lot units, expiry distance, fresh option-chain timestamp,
 and a real Greeks delta inside the configured range. Missing delta is rejected; no
-assumed 0.5 delta is substituted. Daily signal/loss/active/group caps and same-side
-post-stop protection are checked from persisted signal state.
+assumed 0.5 delta is substituted. Portfolio-wide daily signal, loss, active-position and correlation-group caps are not applied;
+strategy quality, per-candle duplicate prevention, contract validation and entry-risk checks remain active.
 
 ### V2 historical replay
 
@@ -62,8 +62,8 @@ python tools/replay_v2.py --db "$DATABASE_URL" --start 2026-09-01 --end 2026-10-
 python tools/replay_v2.py --csv-dir candles/ --symbols NIFTY,RELIANCE --train-frac 0.7 --out v2-replay.csv
 ```
 
-The replay uses closed candles, the 220-bar warm-up, the unified conflict resolver,
-conservative stop-first same-candle outcomes, and portfolio daily/active/group caps.
+The replay uses closed candles, the 220-bar warm-up, the unified conflict resolver and conservative stop-first same-candle outcomes. No portfolio-wide
+daily signal, loss, active-position or correlation-group caps are applied in replay.
 It does not model intrabar tick previews, historical option-chain liquidity/Greeks,
 option-premium changes, theta, IV, brokerage or slippage. Underlying R results must not
 be interpreted as option-premium profitability.
