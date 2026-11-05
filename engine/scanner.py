@@ -657,7 +657,8 @@ class Scanner:
             rsi_call_min=float(cfg.SIMPLE_RSI_CALL_MIN), rsi_call_max=float(cfg.SIMPLE_RSI_CALL_MAX),
             rsi_put_max=float(cfg.SIMPLE_RSI_PUT_MAX), rsi_put_min=float(cfg.SIMPLE_RSI_PUT_MIN),
             fresh_bars=int(cfg.SIMPLE_FRESH_BARS), min_bars=int(cfg.SIMPLE_MIN_BARS),
-            min_session_bars=int(cfg.SIMPLE_MIN_SESSION_BARS))
+            min_session_bars=int(cfg.SIMPLE_MIN_SESSION_BARS),
+            max_entry_extension_atr=float(cfg.SIMPLE_MAX_EXTENSION_ATR))
         diag["scanned"] += 1
         side = int(result.get("side") or 0)
         diag["latest"][u.name] = {"reason": result.get("reason", ""), "setup_type": result.get("setup_type"),
