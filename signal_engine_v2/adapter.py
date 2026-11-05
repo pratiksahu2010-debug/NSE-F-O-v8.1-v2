@@ -19,6 +19,7 @@ def build_snapshot(underlying: str, instrument_kind: str, timeframe: str,
                    candles: Sequence[LegacyCandle],
                    live_candle: Optional[LegacyCandle] = None,
                    futures_volume_by_timestamp: Optional[Mapping] = None,
+                   session_candles: Optional[Sequence[LegacyCandle]] = None,
                    metadata: Optional[dict] = None) -> MarketSnapshot:
     """Create a v2 snapshot from existing feed candles.
 
@@ -36,11 +37,17 @@ def build_snapshot(underlying: str, instrument_kind: str, timeframe: str,
     details = dict(metadata or {})
 
     volume_map = futures_volume_by_timestamp or {}
-    if instrument_kind.upper() == "INDEX" and volume_map:
-        covered = sum(1 for b in analysis_bars if float(volume_map.get(b.timestamp, 0) or 0) > 0)
-        if analysis_bars and covered >= 0.8 * len(analysis_bars):
-            analysis_bars = [replace(b, volume=max(0.0, float(volume_map.get(b.timestamp, 0) or 0)))
-                             for b in analysis_bars]
+    session_source = [_convert(x, True) for x in (session_candles or candles)
+                      if x.ts.date() == current.timestamp.date()]
+    if instrument_kind.upper() == "INDEX":
+        covered = sum(1 for b in session_source if float(volume_map.get(b.timestamp, 0) or 0) > 0)
+        if session_source and volume_map and covered >= 0.8 * len(session_source):
+            session_source = [replace(b, volume=max(0.0, float(volume_map.get(b.timestamp, 0) or 0)))
+                              for b in session_source]
+            # Update matching current-session bars only. Do not invent historical futures volume.
+            replacements = {b.timestamp: b.volume for b in session_source}
+            analysis_bars = [replace(b, volume=replacements[b.timestamp])
+                             if b.timestamp in replacements else b for b in analysis_bars]
             details["volume_source"] = "current_month_future_volume"
         else:
             details["volume_source"] = "unavailable"
@@ -57,7 +64,7 @@ def build_snapshot(underlying: str, instrument_kind: str, timeframe: str,
         candles=tuple(analysis_bars),
         metadata=details,
     )
-    snap = enrich_snapshot(snap)
+    snap = enrich_snapshot(snap, session_candles=session_source)
     legacy_closed = [LegacyCandle(b.timestamp, b.open, b.high, b.low, b.close, b.volume, 0)
                      for b in analysis_bars]
     bias = htf_bias(legacy_closed, minutes=15, completed_only=True)
