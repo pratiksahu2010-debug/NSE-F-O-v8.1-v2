@@ -1163,8 +1163,9 @@ class Scanner:
         with self._maintenance_db_lock:
             # Injected in-memory databases are deliberately shared by test workers;
             # opening a second production PostgreSQL connection would be invalid.
-            if getattr(self.db, "_test_injected", False):
-                return self.db
+            db = getattr(self, "db", None)
+            if getattr(db, "_test_injected", False):
+                return db
             if self._outbox_db is None:
                 from db import DB
                 self._outbox_db = DB(initialize_schema=False)
