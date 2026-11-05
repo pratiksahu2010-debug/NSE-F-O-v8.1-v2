@@ -89,6 +89,14 @@ class Config:
     STAGE1_KEEP = 20
     HIST_DAYS = 20                # trading days of indicator history
 
+    # ---- rebuilt balanced signal engine ----
+    # Keep disabled until historical replay and paper verification are complete.
+    V2_ENGINE_ENABLED = _env("V2_ENGINE_ENABLED", False, _bool)
+    V2_MIN_SCORE = _env("V2_MIN_SCORE", 65.0, float)
+    V2_MIN_ADX = 22.0  # hard minimum; not lowered by environment overrides
+    V2_MIN_RR = _env("V2_MIN_RR", 1.5, float)
+    V2_MIN_HISTORY_BARS = _env("V2_MIN_HISTORY_BARS", 220, int)
+
     # ---- strategy mode ----
     # SIMPLE (default): one closed-bar rule on EMA 9/21 + session VWAP + RSI(14) + ADX(14) >= SIMPLE_ADX_MIN
     # (strategies/simple_signal.py). LEGACY: the previous multi-engine stack (Normal Trend / MEX / ORB / live

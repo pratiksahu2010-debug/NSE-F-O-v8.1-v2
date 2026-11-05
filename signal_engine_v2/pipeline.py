@@ -41,8 +41,23 @@ class SignalPipeline:
 
     def _reject_reasons(self, c: Candidate, snapshot: MarketSnapshot) -> tuple[str, ...]:
         reasons: list[str] = []
+        if len([bar for bar in snapshot.candles if bar.is_closed]) < self.config.min_history_bars:
+            reasons.append("insufficient_220_bar_history")
         if not 0 <= c.score <= 100 or c.score < self.config.min_score:
             reasons.append("score_below_minimum")
+        adx_value = snapshot.indicators.get("adx_14")
+        if not isinstance(adx_value, (int, float)) or adx_value < self.config.min_adx:
+            reasons.append(f"adx_below_minimum_{self.config.min_adx:g}")
+        # Avoid late entries after price has travelled too far from the
+        # short-term trend mean. This is an entry-quality gate, not a signal cap.
+        atr_value = snapshot.indicators.get("atr_14")
+        ema21 = snapshot.indicators.get("ema_21")
+        if isinstance(atr_value, (int, float)) and atr_value > 0 and isinstance(ema21, (int, float)):
+            extension = ((c.entry - ema21) if c.side.value == "CALL" else (ema21 - c.entry)) / atr_value
+            if extension > self.config.max_entry_extension_atr:
+                reasons.append("entry_overextended_from_ema21")
+        if c.candle_timestamp != snapshot.candle.timestamp:
+            reasons.append("candidate_confirmation_timestamp_mismatch")
         if c.age_bars > self.config.max_candidate_age_bars:
             reasons.append("setup_too_old")
         if not directional_levels_valid(c):
@@ -114,6 +129,12 @@ class SignalPipeline:
                 self._emitted.add(dedup_key)
                 fresh.append(decision)
         return rejected + fresh
+
+    def release(self, decision: SignalDecision) -> None:
+        """Allow a same-candle retry when downstream contract validation fails."""
+        dedup_key = decision.decision_key + "|" + decision.state.value
+        with self._lock:
+            self._emitted.discard(dedup_key)
 
     def evaluate(self, snapshot: MarketSnapshot) -> list[SignalDecision]:
         return self.resolve(self.collect(snapshot), snapshot)

@@ -1,4 +1,86 @@
 NSE F&O Signal Engine V8.1 (simple mode)
+
+## Balanced Hybrid V2 engine — staged rollout
+
+The rebuild is available on the `rebuild/balanced-hybrid-v1` branch and is integrated
+behind a safety flag. The production default remains the existing scanner:
+
+```env
+V2_ENGINE_ENABLED=false
+V2_MIN_SCORE=65
+V2_MIN_RR=1.5
+V2_MIN_HISTORY_BARS=220
+# V2 ADX(14) minimum is fixed in code at 22; it cannot be lowered by env
+```
+
+Set `V2_ENGINE_ENABLED=true` only after reviewing replay results and completing paper
+validation. This is still a signal-only system; it does not submit broker orders.
+
+The V2 engine evaluates nine independent 5-minute setup families:
+
+1. Big bullish/bearish momentum
+2. Opening-range breakout (first three completed 5-minute candles)
+3. Volume-confirmed breakout/breakdown
+4. Breakout retest
+5. Trend pullback/resumption
+6. VWAP reclaim/rejection
+7. Momentum reversal with price-structure trigger
+8. Volatility squeeze breakout
+9. Failed breakout/liquidity sweep
+
+A shared 100-point score combines setup/price structure, EMA alignment, VWAP, ADX/+DI/-DI,
+relative volume, RSI/MACD, completed 15-minute context, candle quality and volatility.
+ADX(14) >= 22 is a hard publication gate for every V2 strategy and both early previews
+and closed-bar confirmations. Missing ADX is rejected. A score cannot override this gate.
+Entries more than 1.25 ATR from EMA21 are rejected as overextended; the setting is
+available as EngineConfig.max_entry_extension_atr.
+Provisional grade bands are A+ (85-100), A (75-84), B (65-74); below 65 is rejected.
+These are initial engineering thresholds, not evidence of profitability.
+
+The context layer classifies TRENDING_UP, TRENDING_DOWN, COMPRESSION, SIDEWAYS,
+CHOPPY and VOLATILITY_EXPANSION regimes. The impulse detector scores range expansion,
+relative-volume expansion, ADX acceleration, EMA separation and MACD histogram expansion.
+It adds a separate NORMAL / STRONG / EXPLOSIVE move-potential label; this label is not
+a promise of future movement and never creates a signal by itself. Relative strength
+versus NIFTY is calculated from timestamp-aligned session returns when both returns
+are available; missing reference data is neutral, not fabricated.
+
+The resolver selects one candidate per underlying/candle and rejects unclear opposing
+directions. The 220-bar history floor is mandatory. Indicators use finalized candles;
+15-minute context is built from completed bars only. For index underlyings, the engine
+uses current-session futures volume to weight the index-price VWAP/RVOL only when timestamp
+coverage is adequate; otherwise index volume is treated as unavailable rather than
+fabricated. Volume-confirmed breakout requires usable RVOL.
+
+Hybrid entry handling:
+- `EARLY INTRABAR` is a provisional Telegram preview. It is not saved as an active signal
+  and is not added to the trade tracker.
+- `CLOSED-BAR CONFIRMED` is the finalized signal and is persisted/tracked normally.
+- If the closed candle changes direction, the alert explicitly says the closed-bar result
+  takes priority over the earlier preview.
+
+V2 option selection validates index/stock spread limits, executable bid/ask, one-lot
+market depth, OI and volume in lot units, expiry distance, fresh option-chain timestamp,
+and a real Greeks delta inside the configured range. Missing delta is rejected; no
+assumed 0.5 delta is substituted. Portfolio-wide daily signal, loss, active-position and correlation-group caps are not applied;
+strategy quality, per-candle duplicate prevention, contract validation and entry-risk checks remain active.
+
+### V2 historical replay
+
+Use archived 5-minute candles to evaluate the V2 strategies before enabling the feature
+flag. Replay is on the underlying, not option premiums:
+
+```bash
+python tools/replay_v2.py --db "$DATABASE_URL" --start 2026-09-01 --end 2026-10-31
+python tools/replay_v2.py --csv-dir candles/ --symbols NIFTY,RELIANCE --train-frac 0.7 --out v2-replay.csv
+```
+
+The replay uses closed candles, the 220-bar warm-up, the unified conflict resolver and conservative stop-first same-candle outcomes. No portfolio-wide
+daily signal, loss, active-position or correlation-group caps are applied in replay.
+It does not model intrabar tick previews, historical option-chain liquidity/Greeks,
+option-premium changes, theta, IV, brokerage or slippage. Underlying R results must not
+be interpreted as option-premium profitability.
+
 No signals? Run `python tools/doctor.py` first (Render shell, or locally with the same environment variables). It walks
 the pipeline - token, instrument master, candles, rule, option chain, contract, risk, Telegram - and names the stage that
 fails. V8.1 also waits for a late-published 5-minute candle, backfills missing history during the scan, isolates per-symbol

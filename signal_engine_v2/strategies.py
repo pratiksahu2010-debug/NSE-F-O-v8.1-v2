@@ -152,7 +152,7 @@ class VolumeBreakout(Strategy):
         if None in (hi, lo, vwap, e9, e21):
             return []
         vol = _ind(s, "rvol_20")
-        if vol is not None and vol < 1.25:
+        if vol is None or vol < 1.25:
             return []
         atrv = _ind(s, "atr_14")
         if not atrv:

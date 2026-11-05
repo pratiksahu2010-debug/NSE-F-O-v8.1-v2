@@ -30,6 +30,10 @@ from engine.adaptive import Adaptive
 from engine.contract_picker import pick_contract, pick_expiry
 from telegram_service import format_signal
 from utils.market_hours import can_signal, IST
+from signal_engine_v2.runtime import create_engine as create_v2_engine, evaluate_legacy_candles
+from signal_engine_v2.models import DecisionState as V2DecisionState
+from signal_engine_v2.config import EngineConfig as V2EngineConfig
+from signal_engine_v2.contracts import (validate_option_quote, select_validated_contract)
 
 log = logging.getLogger("scanner")
 
@@ -154,6 +158,14 @@ class Scanner:
         self.risk, self.tracker, self.hist = risk, tracker, hist
         self.history_writer = history_writer
         self.adaptive = Adaptive(db)
+        self.v2_engine = create_v2_engine(config=V2EngineConfig(
+            min_score=float(cfg.V2_MIN_SCORE),
+            min_risk_reward=float(cfg.V2_MIN_RR),
+            min_history_bars=int(cfg.V2_MIN_HISTORY_BARS),
+            min_adx=22.0,
+        ))
+        self._v2_preview_lock = threading.Lock()
+        self._v2_early_previews = {}
         self.ban: Set[str] = set()
         self.last_stats = {}
         self.last_cycle_at: Optional[str] = None
@@ -439,6 +451,57 @@ class Scanner:
 
     def _detect_live_candidate(self, und, partial, now, cached):
         try:
+            if cfg.V2_ENGINE_ENABLED:
+                volume_map = {bar.ts: bar.v for bar in (cached.get("fut") or [])}
+                decisions = evaluate_legacy_candles(
+                    self.v2_engine, und.name, und.kind, "5m", cached["allc"],
+                    live_candle=partial, futures_volume_by_timestamp=volume_map,
+                    session_candles=cached["session"],
+                    metadata={"market_bias": self.mkt_bias, "group": und.group,
+                              "underlying_return_pct": ctx.session_return_pct(cached["session"]),
+                              "index_return_pct": self.mkt_ret,
+                              "provider": getattr(self.fo, "active_name", "UPSTOX")},
+                )
+                early = [d for d in decisions if d.state is V2DecisionState.EARLY]
+                if not early:
+                    return
+                decision = max(early, key=lambda d: (d.candidate.score,
+                                                     -d.candidate.strategy_priority))
+                v2c = decision.candidate
+                side = v2c.side.value
+                entry = {
+                    "symbol": und.name, "strategy": v2c.strategy, "side": side,
+                    "mode": "INTRABAR", "setup_time": v2c.candle_timestamp.isoformat(),
+                    "trigger_time": v2c.candle_timestamp.isoformat(),
+                    "confirmation_time": now.isoformat(),
+                    "confirmation_price": float(v2c.entry), "timeframe": "5m-intrabar",
+                    "setup_id": v2c.setup_id,
+                }
+                candidate = {
+                    "strategy": "V2_ENGINE", "side": side,
+                    "reason": "; ".join(v2c.reasons) or v2c.strategy,
+                    "setup_id": v2c.setup_id, "confirmation_time": now.isoformat(),
+                    "bar": partial, "metrics": dict(v2c.metadata),
+                    "v2_candidate": v2c, "v2_decision": decision,
+                    "entry_candidate": entry,
+                }
+                key = candidate["setup_id"]
+                with self._live_state_lock:
+                    if key in self._live_inflight:
+                        return
+                    self._live_inflight.add(key)
+                try:
+                    if getattr(self, "_closed", False):
+                        with self._live_state_lock:
+                            self._live_inflight.discard(key)
+                        return
+                    self.live_pool.submit(self._evaluate_live_candidate, und, candidate, cached)
+                except RuntimeError:
+                    with self._live_state_lock:
+                        self._live_inflight.discard(key)
+                    if not getattr(self, "_closed", False):
+                        log.exception("v2 live candidate dispatch unavailable for %s", und.name)
+                return
             # SIMPLE uses its own EMA/VWAP/RSI/ADX live trigger; LEGACY keeps
             # the separate Normal detector. MEX and ORB remain independent.
             allow_sequential = (cfg.STRATEGY_MODE == "LEGACY" and
@@ -491,11 +554,13 @@ class Scanner:
         symbol_lock = self._live_symbol_locks.get(und.name)
         if symbol_lock is None or not symbol_lock.acquire(blocking=False):
             # This candidate was reserved by _detect_live_candidate. Always
-            # release that reservation even when a closed-bar evaluation owns
-            # the per-symbol lock, otherwise this setup can never be retried.
+            # release both reservations when the symbol lock is busy.
             with self._live_state_lock:
                 self._live_inflight.discard(key)
+            if candidate.get("v2_decision") is not None:
+                self.v2_engine.release(candidate["v2_decision"])
             return
+        published = False
         try:
             # A live alert already being tracked for this underlying blocks a
             # second entry until that signal is closed.
@@ -508,11 +573,13 @@ class Scanner:
             completed_all = list(cached["allc"])
             side_sign = 1 if candidate["side"] == "CALL" else -1
             strategy = candidate["strategy"]
-            score = 0.82 if strategy in ("MOMENTUM_ORB", "MOMENTUM_EXPLOSION") else 1.0
+            score = (float(candidate["v2_candidate"].score) / 100.0
+                     if strategy == "V2_ENGINE" else
+                     0.82 if strategy in ("MOMENTUM_ORB", "MOMENTUM_EXPLOSION") else 1.0)
             vote_name = {"MOMENTUM_ORB": "MOMENTUM_ORB",
                          "MOMENTUM_EXPLOSION": "MOMENTUM_EXPLOSION",
                          "V7_SEQUENTIAL": "V7_SEQUENTIAL", "NORMAL_TREND": "NORMAL_TREND",
-                         "SIMPLE_TREND": "SIMPLE_TREND"}[strategy]
+                         "SIMPLE_TREND": "SIMPLE_TREND", "V2_ENGINE": "V2_ENGINE"}[strategy]
             vote = Vote(vote_name, side_sign * score, candidate["reason"])
             v7_decision = None
             if strategy == "V7_SEQUENTIAL":
@@ -521,7 +588,9 @@ class Scanner:
                     metrics={**(candidate.get("metrics") or {}), "setup_type": "LIVE_INTRABAR_CONTINUATION",
                              "ema_cross_bars": 0, "vwap_mode": "closed-session-vwap",
                              "live_trigger": candidate["reason"]})
-            entry = {k: v for k, v in candidate.items() if k != "bar"}
+            entry = (dict(candidate.get("entry_candidate") or {})
+                     if strategy == "V2_ENGINE" else
+                     {k: v for k, v in candidate.items() if k != "bar"})
             entry["mode"] = "INTRABAR"
             entry["timeframe"] = "5m-intrabar"
             item = {"u": und, "ps": side_sign * score, "votes": [vote],
@@ -529,7 +598,9 @@ class Scanner:
                     "fut": cached.get("fut") or [],
                     "v7_decision": v7_decision,
                     "momentum_orb_metrics": candidate.get("metrics") or {}, "normal_metrics": candidate.get("metrics") or {},
-                    "entry_candidate": entry}
+                    "entry_candidate": entry,
+                    "v2_candidate": candidate.get("v2_candidate"),
+                    "v2_decision": candidate.get("v2_decision")}
             expiry = pick_expiry(self.master, und, now.date())
             if not expiry:
                 self._reject("no eligible expiry", und.name, "live trigger")
@@ -545,17 +616,22 @@ class Scanner:
             # directly instead of _evaluate(), which would try to acquire the same lock again.
             sig = self._evaluate_locked(item, [], now, (expiry, (chain, fut)))
             if sig:
+                published = True
                 self.live_engine.mark_sent(key)
                 log.info("LIVE INTRABAR SIGNAL %s %s %s", und.name, candidate["side"], strategy)
         except Exception:
             log.exception("live candidate evaluation failed for %s", und.name)
         finally:
+            if not published and candidate.get("v2_decision") is not None:
+                self.v2_engine.release(candidate["v2_decision"])
             with self._live_state_lock:
                 self._live_inflight.discard(key)
             symbol_lock.release()
 
     # ---------------- stage 1 ----------------
     def _required_history_bars(self) -> int:
+        if cfg.V2_ENGINE_ENABLED:
+            return max(220, int(cfg.V2_MIN_HISTORY_BARS))
         return int(cfg.SIMPLE_MIN_BARS) if cfg.STRATEGY_MODE != "LEGACY" else int(cfg.V7_MIN_BARS)
 
     @staticmethod
@@ -730,6 +806,17 @@ class Scanner:
 
     def stage1(self, now: datetime):
         self._scan_now = now
+        if not hasattr(self, "_v2_preview_lock"):
+            self._v2_preview_lock = threading.Lock()
+            self._v2_early_previews = {}
+        with self._v2_preview_lock:
+            for preview_key, preview in list(self._v2_early_previews.items()):
+                try:
+                    preview_at = datetime.fromisoformat(preview["candle_ts"])
+                    if (now - preview_at).total_seconds() > 15 * 60:
+                        self._v2_early_previews.pop(preview_key, None)
+                except (TypeError, ValueError, KeyError):
+                    self._v2_early_previews.pop(preview_key, None)
         with self._ready_lock:
             self._ready_state = {"ready": False, "gave_up": False}
         with self._backfill_lock:
@@ -803,6 +890,63 @@ class Scanner:
                     self.mkt_ret = ctx.session_return_pct(session)
                 except Exception:
                     log.exception("NIFTY market-bias update failed; keeping the previous value")
+            if cfg.V2_ENGINE_ENABLED:
+                try:
+                    volume_map = {bar.ts: bar.v for bar in fut} if fut else {}
+                    decisions = evaluate_legacy_candles(
+                        self.v2_engine, u.name, u.kind, "5m", allc,
+                        futures_volume_by_timestamp=volume_map,
+                        session_candles=session,
+                        metadata={"market_bias": self.mkt_bias, "group": u.group,
+                                  "underlying_return_pct": ctx.session_return_pct(session),
+                                  "index_return_pct": self.mkt_ret,
+                                  "provider": getattr(self.fo, "active_name", "UPSTOX")},
+                    )
+                    eligible = [d for d in decisions if d.state in (
+                        V2DecisionState.CONFIRMED, V2DecisionState.EARLY)]
+                    if not eligible:
+                        counts["insufficient_or_no_price_setup"] += 1
+                        for decision in decisions:
+                            for reason in decision.rejected_reasons:
+                                self._why[reason] = self._why.get(reason, 0) + 1
+                        self._note_symbol(u.name, "v2", "no qualifying unified setup")
+                        continue
+                    decision = max(eligible, key=lambda d: (d.candidate.score,
+                                                            -d.candidate.strategy_priority))
+                    candidate = decision.candidate
+                    side_name = candidate.side.value
+                    side_sign = 1 if side_name == "CALL" else -1
+                    score_fraction = candidate.score / 100.0
+                    reason = "; ".join(candidate.reasons) or candidate.strategy
+                    vote = Vote("V2_ENGINE", side_sign * score_fraction, reason)
+                    confirm = candidate.candle_timestamp.isoformat()
+                    entry_contract = {
+                        "symbol": u.name, "strategy": candidate.strategy,
+                        "side": side_name,
+                        "mode": "INTRABAR" if candidate.candle_state.value == "INTRABAR" else "CLOSED_BAR",
+                        "setup_time": confirm, "trigger_time": confirm,
+                        "confirmation_time": confirm,
+                        "confirmation_price": float(candidate.entry),
+                        "timeframe": "5m", "setup_id": candidate.setup_id,
+                    }
+                    self._watch(u.name, side_name, candidate.candle_timestamp,
+                                side_sign * score_fraction, "WATCHING",
+                                reasons=list(candidate.reasons), now=now)
+                    out.append({
+                        "u": u, "ps": side_sign * score_fraction, "votes": [vote],
+                        "session": session, "allc": allc, "fut": fut,
+                        "v7_decision": None, "selected_engine": "V2_ENGINE",
+                        "normal_metrics": {}, "momentum_orb_metrics": {},
+                        "mex_metrics": {}, "entry_candidate": entry_contract,
+                        "v2_candidate": candidate, "v2_decision": decision,
+                    })
+                    counts["v2_candidates"] = counts.get("v2_candidates", 0) + 1
+                except Exception as exc:
+                    counts["evaluation_errors"] += 1
+                    self._note_symbol(u.name, "v2", "unified engine evaluation error",
+                                      f"{type(exc).__name__}: {exc}"[:160])
+                    log.exception("v2 strategy evaluation failed | symbol=%s", u.name)
+                continue
             # Keep the configured Normal engine exactly as selected, then run
             # MEX and ORB independently for their own universes in BOTH modes.
             if cfg.STRATEGY_MODE != "LEGACY":
@@ -1064,6 +1208,29 @@ class Scanner:
         return results
 
     # ---------------- stage 2 + 3 ----------------
+    def _v2_status(self) -> dict:
+        diagnostics = getattr(self, "_stage1_diagnostics", {}) or {}
+        preview_lock = getattr(self, "_v2_preview_lock", None)
+        if preview_lock is not None:
+            with preview_lock:
+                preview_count = len(getattr(self, "_v2_early_previews", {}) or {})
+        else:
+            preview_count = 0
+        return {
+            "enabled": bool(cfg.V2_ENGINE_ENABLED),
+            "profile": "BALANCED_HYBRID",
+            "strategy_count": 9,
+            "min_score": float(cfg.V2_MIN_SCORE),
+            "min_adx": 22.0,
+            "max_entry_extension_atr": 1.25,
+            "min_risk_reward": float(cfg.V2_MIN_RR),
+            "min_history_bars": max(220, int(cfg.V2_MIN_HISTORY_BARS)),
+            "intrabar_enabled": bool(cfg.LIVE_INTRABAR_ENABLED),
+            "closed_bar_candidates": int(diagnostics.get("v2_candidates", 0)),
+            "early_previews_cached": preview_count,
+            "signal_only": True,
+        }
+
     def run_once(self, now: datetime) -> List[Signal]:
         """One scan cycle. `last_cycle_at` is set only when the cycle completes without raising, so health
         checks can tell a finished scan from a crashed one."""
@@ -1120,6 +1287,7 @@ class Scanner:
                 "symbol_diagnostics": self._symbol_rejections,
                 "mex_engine": self.mex.snapshot(), "momentum_orb_engine": self.momentum_orb.snapshot(), "v7_sequential": self.v7_diagnostics,
                 "normal_trend_engine": self.normal_trend_diagnostics,
+                "v2_engine": self._v2_status(),
                 "normal_live_intrabar": self.live_engine.normal_snapshot(),
                 "v7_config": {"adx_min": cfg.V7_ADX_MIN, "cross_max_bars": cfg.V7_CROSSOVER_MAX_BARS,
                               "vwap_max_atr": cfg.V7_VWAP_MAX_ATR, "pullback_trend_bars": cfg.V7_PULLBACK_TREND_BARS,
@@ -1135,6 +1303,7 @@ class Scanner:
                            "symbol_diagnostics": self._symbol_rejections,
                            "mex_engine": self.mex.snapshot(), "momentum_orb_engine": self.momentum_orb.snapshot(), "v7_sequential": self.v7_diagnostics,
                            "normal_trend_engine": self.normal_trend_diagnostics,
+                           "v2_engine": self._v2_status(),
                            "normal_live_intrabar": self.live_engine.normal_snapshot(),
                            "v7_config": {"adx_min": cfg.V7_ADX_MIN, "cross_max_bars": cfg.V7_CROSSOVER_MAX_BARS,
                                          "vwap_max_atr": cfg.V7_VWAP_MAX_ATR, "pullback_trend_bars": cfg.V7_PULLBACK_TREND_BARS,
@@ -1174,6 +1343,7 @@ class Scanner:
         self.last_stats["evaluation_errors"] = eval_errors
         self.last_stats["signals"] = len(sent)
         self.last_stats["normal_trend_engine"] = self.normal_trend_diagnostics
+        self.last_stats["v2_engine"] = self._v2_status()
         self.last_stats["normal_live_intrabar"] = self.live_engine.normal_snapshot()
         self.last_stats["mex_engine"] = self.mex.snapshot()
         self.last_stats["momentum_orb_engine"] = self.momentum_orb.snapshot()
@@ -1373,7 +1543,15 @@ class Scanner:
         if lock is None or not lock.acquire(blocking=False):
             return self._reject("symbol evaluation busy", und.name)
         try:
-            return self._evaluate_locked(c, vix, now, pre)
+            try:
+                result = self._evaluate_locked(c, vix, now, pre)
+            except Exception:
+                if c.get("v2_decision") is not None:
+                    self.v2_engine.release(c["v2_decision"])
+                raise
+            if result is None and c.get("v2_decision") is not None:
+                self.v2_engine.release(c["v2_decision"])
+            return result
         finally:
             lock.release()
 
@@ -1491,10 +1669,11 @@ class Scanner:
         is_mex = any(getattr(v, "name", "") == "MOMENTUM_EXPLOSION" for v in c.get("votes", []))
         is_normal_trend = any(getattr(v, "name", "") == "NORMAL_TREND" for v in c.get("votes", []))
         is_simple = any(getattr(v, "name", "") == "SIMPLE_TREND" for v in c.get("votes", []))
+        is_v2 = c.get("v2_candidate") is not None
         context_veto = ctx.veto_from(cfeat, u.kind, is_reversal_setup, ignore_trend_context=True)
-        if context_veto and (is_v7_sequential or is_momentum_orb or is_mex or is_normal_trend or is_simple):
+        if context_veto and (is_v7_sequential or is_momentum_orb or is_mex or is_normal_trend or is_simple or is_v2):
             cfeat["independent_setup_bypassed_context_veto"] = {
-                "setup": "SIMPLE_TREND" if is_simple else "V7_SEQUENTIAL" if is_v7_sequential else "MOMENTUM_ORB" if is_momentum_orb else "MOMENTUM_EXPLOSION" if is_mex else "NORMAL_TREND",
+                "setup": "SIMPLE_TREND" if is_simple else "V7_SEQUENTIAL" if is_v7_sequential else "MOMENTUM_ORB" if is_momentum_orb else "MOMENTUM_EXPLOSION" if is_mex else "NORMAL_TREND" if is_normal_trend else "V2_ENGINE",
                 "code": context_veto[0], "detail": context_veto[1]
             }
             self._note_symbol(u.name, "independent_setup", "optional context veto bypassed",
@@ -1572,6 +1751,24 @@ class Scanner:
             ]
             score_rejects = []
             extra, extra_note = 0.0, "not applied: dedicated Momentum+ORB gates are authoritative"
+        elif is_v2:
+            v2_candidate = c["v2_candidate"]
+            score_10 = round(float(v2_candidate.score) / 10.0, 2)
+            diagnostic_metrics = dict(v2_candidate.metadata or {})
+            diagnostic_metrics["score_components"] = {
+                "unified_v2_score_100": round(float(v2_candidate.score), 2)
+            }
+            gate = {"metrics": diagnostic_metrics}
+            score_reasons = list(v2_candidate.reasons) + [
+                f"Unified balanced score {v2_candidate.score:.1f}/100 | grade {v2_candidate.metadata.get('grade', 'B')}",
+                f"Independent strategy: {v2_candidate.strategy}",
+                "Selected after same-candle direction conflict resolution",
+            ]
+            score_rejects = []
+            extra, extra_note = 0.0, "not applied: unified v2 scorer is authoritative"
+            if v2_candidate.score < float(cfg.V2_MIN_SCORE):
+                return self._reject("v2 score gate", u.name,
+                                    f"{v2_candidate.score:.1f}/100 < {cfg.V2_MIN_SCORE:.1f}/100")
         elif is_normal_trend:
             normal_metrics = dict(c.get("normal_metrics") or {})
             score_10 = 8.0
@@ -1603,9 +1800,10 @@ class Scanner:
                                     f"{score_10:.2f}/10 < {cfg.ALERT_SCORE_MIN + extra:.2f}/10 ({extra_note})")
         side, conf = side_hint, score_10
         agree = independent_agree
-        strategy = ("SIMPLE_TREND" if is_simple else "NORMAL_TREND" if is_normal_trend
+        strategy = (c["v2_candidate"].strategy if is_v2 else
+                    "SIMPLE_TREND" if is_simple else "NORMAL_TREND" if is_normal_trend
                     else strategy_of(c["votes"][0].name) if c["votes"] else "TREND")
-        tier = "CONFIRMED"
+        tier = ("EARLY" if str((entry_candidate or {}).get("mode", "")).upper() == "INTRABAR" else "CONFIRMED") if is_v2 else "CONFIRMED"
         reasons = list(score_reasons) + scorer.reasons(c["votes"], side)
         trend_note = "15m trend aligned" if htf == (1 if side == "CALL" else -1) else "15m trend mixed"
         vwap_note = "15m VWAP aligned" if htf_vwap == (1 if side == "CALL" else -1) else ("15m VWAP opposed (score-only)" if htf_vwap in (-1, 1) else "15m VWAP neutral")
@@ -1616,12 +1814,25 @@ class Scanner:
         # Retain OI-wall levels as informational alert metadata only; they never veto a signal.
         res, sup = chain.wall("CE"), chain.wall("PE")
         ivr = calc_iv_rank(chain.atm_iv(), self.db.iv_hist(u.name))
-        contract, q, why = pick_contract(self.master, u, side, chain, now, ivr)
+        if is_v2:
+            strict_selection, why = select_validated_contract(
+                self.master, u, side, chain, datetime.now(IST), iv_rank=ivr
+            )
+            contract = strict_selection.contract if strict_selection else None
+            q = strict_selection.quote if strict_selection else None
+        else:
+            contract, q, why = pick_contract(self.master, u, side, chain, now, ivr)
         if not contract:
             self._watch(u.name, side, entry_bar.ts, c["ps"], "INVALIDATED", score_10, score_reasons + [f"contract rejected: {why}"], now)
             return self._reject("contract rejected", u.name, f"{side} ({why})")
         # A buy entry must be priced from the current ask. Never substitute LTP:
         # the last trade may be stale or below the price currently available to buy.
+        if is_v2:
+            quote_ok, quote_reason = validate_option_quote(q, u)
+            if not quote_ok:
+                self._watch(u.name, side, entry_bar.ts, c["ps"], "INVALIDATED",
+                            score_10, score_reasons + [f"strict quote gate: {quote_reason}"], now)
+                return self._reject("strict option quote gate", u.name, quote_reason)
         px = _executable_buy_price(q)
         if px is None:
             self._watch(u.name, side, entry_bar.ts, c["ps"], "INVALIDATED", score_10, score_reasons + ["no executable option price"], now)
@@ -1629,11 +1840,14 @@ class Scanner:
         # Normal/SIMPLE uses the same nearby structural invalidation reference as
         # the legacy trend path (EMA9, session VWAP, or trigger-candle extreme).
         # RiskRules still rejects stops outside its permitted ATR envelope.
-        required_rr = max(float(cfg.MIN_RR_T1), float(getattr(cfg, "SIMPLE_MIN_RR_T1", 1.5))) if is_simple else float(cfg.MIN_RR_T1)
-        stop_dist = invalidation_distance(side, c["session"], c["allc"], spot, strategy,
-                                           trigger_bar=entry_bar if is_simple else None)
+        required_rr = (float(cfg.V2_MIN_RR) if is_v2 else
+                        max(float(cfg.MIN_RR_T1), float(getattr(cfg, "SIMPLE_MIN_RR_T1", 1.5)))
+                        if is_simple else float(cfg.MIN_RR_T1))
+        stop_dist = (abs(spot - float(c["v2_candidate"].stop)) if is_v2 else
+                     invalidation_distance(side, c["session"], c["allc"], spot, strategy,
+                                           trigger_bar=entry_bar if is_simple else None))
         lv = self.risk.levels(px, q.delta, a5, contract.tick_size, side, spot, stop_dist,
-                              min_target_rr=required_rr if is_simple else None)
+                              min_target_rr=required_rr if (is_simple or is_v2) else None)
         if not lv or float(lv.get("rr", 0.0)) < float(cfg.MIN_RR_T1):
             self._watch(u.name, side, entry_bar.ts, c["ps"], "INVALIDATED", score_10, score_reasons + ["risk/reward validation failed"], now)
             return self._reject("risk levels rejected", u.name, side)
@@ -1685,6 +1899,18 @@ class Scanner:
         signal_candle_ts = entry_bar.ts
         intrabar_entry = str((entry_candidate or {}).get("mode", "")).upper() == "INTRABAR"
         candle_identity = signal_candle_ts.strftime("%Y%m%dT%H%M%S")
+        preview_key = (u.name, signal_candle_ts.isoformat())
+        if is_v2 and not intrabar_entry:
+            with self._v2_preview_lock:
+                earlier_preview = self._v2_early_previews.pop(preview_key, None)
+            if earlier_preview:
+                if earlier_preview.get("side") == side:
+                    score_reasons.append("Earlier provisional intrabar preview was confirmed by this closed candle")
+                else:
+                    score_reasons.append(
+                        f"Closed candle reversed earlier provisional {earlier_preview.get('side')} preview; "
+                        "closed-bar direction takes priority"
+                    )
         signal_timestamp = (datetime.fromisoformat(entry_candidate["confirmation_time"])
                             if intrabar_entry else signal_candle_ts + timedelta(minutes=cfg.SCAN_MINUTES))
         sig = Signal(
@@ -1698,28 +1924,46 @@ class Scanner:
             valid_till=valid_till, exit_by=exit_by, cost_lot=px * lot, max_loss_lot=max_loss_per_lot, rr=lv["rr"],
             delta=q.delta, theta=q.theta, iv=q.iv, iv_rank=ivr, spread_pct=q.spread_pct, oi=q.oi, volume=q.volume,
             pcr=chain.pcr, support=sup[0] if sup else 0, resistance=res[0] if res else 0, dte=(expiry - today).days,
-            confidence=conf, agree=agree, reasons=reasons, strategy=strategy, tier=tier, kind=u.kind, cur_sl=lv["sl"], prem_high=px, provider=self.fo.active_name)
-        self._watch(u.name, side, entry_bar.ts, c["ps"], "CONFIRMED", score_10, score_reasons, now)
+            confidence=conf, agree=agree, reasons=reasons, strategy=strategy, tier=tier,
+            kind=u.kind, cur_sl=lv["sl"], prem_high=px, provider=self.fo.active_name,
+            status="EARLY" if (is_v2 and intrabar_entry) else "ACTIVE")
+        self._watch(u.name, side, entry_bar.ts, c["ps"],
+                    "EARLY_PREVIEW" if (is_v2 and intrabar_entry) else "CONFIRMED",
+                    score_10, score_reasons, now)
         dedupe_key = f"alert:{signal_candle_ts.date().isoformat()}:{u.name}:{candle_identity}:{side}"
+        if is_v2:
+            dedupe_key += ":EARLY" if intrabar_entry else ":CONFIRMED"
         if self._already_alerted(dedupe_key):
             return self._reject("duplicate alert suppressed", u.name, sig.id)
-        self.db.save_signal(sig)
-        try:      # features for tools/calibrate.py: what the signal looked like when it fired
-            feats = dict(gate.get("metrics", {}))
-            if is_v7_sequential:
-                feats["v7_sequential"] = v7_decision.metrics
-            feats.update(cfeat)
-            feats.update({"score": score_10, "strategy": strategy, "kind": u.kind, "side": side,
-                          "votes": [getattr(v, "name", "") for v in c["votes"]], "adaptive_extra": extra,
-                          "spread_pct": q.spread_pct, "dte": (expiry - today).days, "regime_label": reg.get("label"),
-                          "entry_contract": entry_candidate, "entry_validation": structure_metrics})
-            self.db.save_features(sig.id, sig.ts[:10], feats)
-        except Exception:
-            log.exception("signal feature logging failed")
-        self.tracker.add(sig, contract)
+        preview_only = bool(is_v2 and intrabar_entry)
+        if not preview_only:
+            self.db.save_signal(sig)
+        if not preview_only:
+            try:      # features for tools/calibrate.py: what the signal looked like when it fired
+                feats = dict(gate.get("metrics", {}))
+                if is_v7_sequential:
+                    feats["v7_sequential"] = v7_decision.metrics
+                feats.update(cfeat)
+                feats.update({"score": score_10, "strategy": strategy, "kind": u.kind, "side": side,
+                              "votes": [getattr(v, "name", "") for v in c["votes"]], "adaptive_extra": extra,
+                              "spread_pct": q.spread_pct, "dte": (expiry - today).days, "regime_label": reg.get("label"),
+                              "entry_contract": entry_candidate, "entry_validation": structure_metrics})
+                self.db.save_features(sig.id, sig.ts[:10], feats)
+            except Exception:
+                log.exception("signal feature logging failed")
+        if not preview_only:
+            self.tracker.add(sig, contract)
         telegram_acknowledged = self._queue_signal_alert(sig, dedupe_key, format_signal(sig), now)
-        log.info("signal lifecycle | signal_id=%s | database_saved=true | telegram_acknowledged=%s",
-                 sig.id, bool(telegram_acknowledged))
+        log.info("signal lifecycle | signal_id=%s | database_saved=%s | preview_only=%s | telegram_acknowledged=%s",
+                 sig.id, not preview_only, preview_only, bool(telegram_acknowledged))
+        if preview_only and not telegram_acknowledged:
+            return None
+        if preview_only:
+            with self._v2_preview_lock:
+                self._v2_early_previews[preview_key] = {
+                    "side": side, "score": float(c["v2_candidate"].score),
+                    "candle_ts": signal_candle_ts.isoformat(),
+                }
         log.info("SIGNAL %s %s %s %s score=%.2f/10", sig.underlying, sig.side, sig.contract, strategy, conf)
         return sig
 

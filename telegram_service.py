@@ -82,7 +82,13 @@ def _p(x, d=2):
 
 STRATEGY_LABEL = {"TREND": "📈 TREND", "REVERSAL": "🔄 REVERSAL (counter-trend)", "ORB": "🚀 OPENING-RANGE BREAKOUT",
                   "VWAP": "🎯 VWAP RECLAIM / REJECTION", "SQUEEZE": "💥 SQUEEZE BREAKOUT", "MOMENTUM_EXPLOSION": "🚀 MOMENTUM EXPLOSION — CONFIRMED",
-                  "SIMPLE_TREND": "📈 TREND (EMA 9/21 + VWAP + RSI + ADX)"}
+                  "SIMPLE_TREND": "📈 TREND (EMA 9/21 + VWAP + RSI + ADX)",
+                  "BIG_MOMENTUM": "📈 BIG MOMENTUM", "VOLUME_BREAKOUT": "📊 VOLUME-CONFIRMED BREAKOUT",
+                  "BREAKOUT_RETEST": "🔁 BREAKOUT RETEST", "TREND_PULLBACK": "📈 TREND PULLBACK",
+                  "VWAP_RECLAIM_REJECTION": "🎯 VWAP RECLAIM / REJECTION",
+                  "MOMENTUM_REVERSAL": "🔄 MOMENTUM REVERSAL",
+                  "SQUEEZE_BREAKOUT": "💥 SQUEEZE BREAKOUT",
+                  "FAILED_BREAKOUT_SWEEP": "🧹 FAILED BREAKOUT / LIQUIDITY SWEEP"}
 
 
 def format_signal(s: Signal) -> str:
@@ -103,7 +109,9 @@ def format_signal(s: Signal) -> str:
         f"<b>Signal / alert time:</b> {signal_time}",
         f"{icon} <b>{word} | {html.escape(s.underlying)}</b>  {'📝 PAPER' if cfg.PAPER_MODE else ''}",
         f"<b>Type:</b> {STRATEGY_LABEL.get(s.strategy, '📈 TREND')} | "
-        "✅ CONFIRMED — score and mandatory gates passed",
+        + ("⚠️ EARLY INTRABAR — provisional; revalidate before acting"
+           if str(getattr(s, "tier", "CONFIRMED")).upper() == "EARLY"
+           else "✅ CLOSED-BAR CONFIRMED — score and mandatory gates passed"),
         f"<b>Contract:</b> <code>{html.escape(s.contract)}</code>",
         f"<b>Expiry:</b> {s.expiry} ({s.dte}d) | <b>Strike:</b> {s.strike:g} {s.opt_type}",
         f"<b>Lot size:</b> {s.lot_size} | <b>Cost/lot:</b> ₹{_p(s.cost_lot, 0)}",
@@ -119,6 +127,11 @@ def format_signal(s: Signal) -> str:
         f"<b>Risk:</b> loss/lot at SL ≈ ₹{_p(s.max_loss_lot, 0)} | R:R(T2) 1:{s.rr:.1f}",
         (f"<b>Rule:</b> EMA9/21 + VWAP + RSI + ADX ≥ {cfg.SIMPLE_ADX_MIN:g} | feed: {s.provider}"
          if s.strategy == "SIMPLE_TREND" else
+         f"<b>Unified score:</b> {s.confidence:.1f}/10 | grade {('A+' if s.confidence >= 8.5 else 'A' if s.confidence >= 7.5 else 'B')} "
+         f"(minimum {cfg.V2_MIN_SCORE / 10:.1f}/10) | feed: {s.provider}"
+         if s.strategy in {"BIG_MOMENTUM", "ORB", "VOLUME_BREAKOUT", "BREAKOUT_RETEST",
+                           "TREND_PULLBACK", "VWAP_RECLAIM_REJECTION", "MOMENTUM_REVERSAL",
+                           "SQUEEZE_BREAKOUT", "FAILED_BREAKOUT_SWEEP"} else
          f"<b>Score:</b> {s.confidence:.1f}/10 (minimum {cfg.ALERT_SCORE_MIN:.1f}/10) | technical quality checks enabled | feed: {s.provider}"),
         "<b>Why:</b>",
     ]

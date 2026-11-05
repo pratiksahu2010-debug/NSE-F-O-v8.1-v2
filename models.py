@@ -167,7 +167,7 @@ class Signal:
     pnl_lot: float = 0.0
     provider: str = ""
     strategy: str = "TREND"       # TREND | REVERSAL
-    tier: str = "CONFIRMED"       # CONFIRMED only; provisional alerts are not sent
+    tier: str = "CONFIRMED"       # CONFIRMED | EARLY (preview-only; not persisted/tracked)
     kind: str = ""                # INDEX | STOCK (so outcomes can be learned per kind)
     modeled_pnl: float = 0.0       # kept for DB compatibility; equals pnl_lot (one lot)
 
