@@ -508,7 +508,8 @@ class Scanner:
             score = 0.82 if strategy in ("MOMENTUM_ORB", "MOMENTUM_EXPLOSION") else 1.0
             vote_name = {"MOMENTUM_ORB": "MOMENTUM_ORB",
                          "MOMENTUM_EXPLOSION": "MOMENTUM_EXPLOSION",
-                         "V7_SEQUENTIAL": "V7_SEQUENTIAL", "NORMAL_TREND": "NORMAL_TREND"}[strategy]
+                         "V7_SEQUENTIAL": "V7_SEQUENTIAL", "NORMAL_TREND": "NORMAL_TREND",
+                         "SIMPLE_TREND": "SIMPLE_TREND"}[strategy]
             vote = Vote(vote_name, side_sign * score, candidate["reason"])
             v7_decision = None
             if strategy == "V7_SEQUENTIAL":
