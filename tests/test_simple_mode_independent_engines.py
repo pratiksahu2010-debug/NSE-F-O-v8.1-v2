@@ -248,3 +248,29 @@ def test_simple_mode_skips_normal_detector_outside_fixed_universe():
     scanner.momentum_orb.scan.assert_called_once()
     assert candidates == []
     assert hits == 0
+
+
+def test_simple_structural_stop_includes_live_trigger_bar_extreme():
+    from strategies import price
+
+    now = datetime(2026, 11, 5, 12, 0, tzinfo=IST)
+    candles = [
+        Candle(now - timedelta(minutes=5 * (39 - i)),
+               100.0, 102.0, 98.0, 100.0, 1000, 0)
+        for i in range(40)
+    ]
+    live_call = Candle(now, 120.0, 120.5, 119.0, 120.2, 100, 0)
+    live_put = Candle(now, 80.0, 81.0, 79.5, 80.2, 100, 0)
+
+    with (
+        patch.object(price, "atr", return_value=[1.0] * 40),
+        patch.object(price, "ema", return_value=[110.0] * 40),
+        patch.object(price, "vwap", return_value=[105.0] * 40),
+    ):
+        call_distance = price.invalidation_distance(
+            "CALL", candles, candles, 120.0, "SIMPLE_TREND", trigger_bar=live_call)
+        put_distance = price.invalidation_distance(
+            "PUT", candles, candles, 80.0, "SIMPLE_TREND", trigger_bar=live_put)
+
+    assert call_distance == 1.0
+    assert put_distance == 1.0
