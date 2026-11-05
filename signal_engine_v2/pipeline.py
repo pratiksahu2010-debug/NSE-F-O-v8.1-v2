@@ -45,6 +45,8 @@ class SignalPipeline:
             reasons.append("insufficient_220_bar_history")
         if not 0 <= c.score <= 100 or c.score < self.config.min_score:
             reasons.append("score_below_minimum")
+        if c.candle_timestamp != snapshot.candle.timestamp:
+            reasons.append("candidate_confirmation_timestamp_mismatch")
         if c.age_bars > self.config.max_candidate_age_bars:
             reasons.append("setup_too_old")
         if not directional_levels_valid(c):
