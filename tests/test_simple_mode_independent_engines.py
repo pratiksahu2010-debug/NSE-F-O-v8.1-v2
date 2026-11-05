@@ -275,3 +275,29 @@ def test_simple_structural_stop_includes_live_trigger_bar_extreme():
     # STOP_BUFFER_ATR (0.25) is added beyond the selected live wick.
     assert call_distance == 1.25
     assert put_distance == 1.25
+
+def test_simple_structural_stop_never_sits_inside_trigger_bar():
+    from strategies import price
+
+    now = datetime(2026, 11, 5, 12, 0, tzinfo=IST)
+    candles = [
+        Candle(now - timedelta(minutes=5 * (39 - i)),
+               107.0, 108.0, 106.8, 107.2, 1000, 0)
+        for i in range(40)
+    ]
+    live_call = Candle(now, 107.2, 107.6, 106.5, 107.4, 100, 0)
+    live_put = Candle(now, 107.0, 107.5, 106.7, 106.8, 100, 0)
+
+    with (
+        patch.object(price, "atr", return_value=[1.0] * 40),
+        patch.object(price, "ema", return_value=[107.0] * 40),
+        patch.object(price, "vwap", return_value=[106.9] * 40),
+    ):
+        call_distance = price.invalidation_distance(
+            "CALL", candles, candles, 107.5, "SIMPLE_TREND", trigger_bar=live_call)
+        put_distance = price.invalidation_distance(
+            "PUT", candles, candles, 106.5, "SIMPLE_TREND", trigger_bar=live_put)
+
+    # The 0.25 ATR buffer is added beyond the live wick in both directions.
+    assert call_distance == 1.25
+    assert put_distance == 1.25
