@@ -391,7 +391,7 @@ def test_simple_live_candidate_dispatch_accepts_simple_trend_strategy():
     scanner.tracker = SimpleNamespace(signals=lambda: [])
     scanner.master = object()
     scanner._live_option_chain = Mock(return_value=object())
-    scanner._evaluate = Mock(return_value=None)
+    scanner._evaluate_locked = Mock(return_value=None)
     scanner.live_engine = SimpleNamespace(mark_sent=Mock())
 
     und = Underlying(name="ABC", kind="STOCK", spot_key="NSE_EQ|ABC")
@@ -407,7 +407,7 @@ def test_simple_live_candidate_dispatch_accepts_simple_trend_strategy():
     with patch("engine.scanner.pick_expiry", return_value=date(2026, 11, 26)):
         scanner._evaluate_live_candidate(und, candidate, {"session": [], "allc": [], "fut": []})
 
-    assert scanner._evaluate.called
-    evaluated = scanner._evaluate.call_args.args[0]
+    assert scanner._evaluate_locked.called
+    evaluated = scanner._evaluate_locked.call_args.args[0]
     assert evaluated["votes"][0].name == "SIMPLE_TREND"
     assert evaluated["entry_candidate"]["mode"] == "INTRABAR"
