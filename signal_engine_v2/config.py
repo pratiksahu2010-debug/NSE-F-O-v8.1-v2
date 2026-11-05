@@ -11,6 +11,7 @@ class EngineConfig:
     min_score: float = 65.0
     min_risk_reward: float = 1.5
     max_candidate_age_bars: int = 2
+    min_history_bars: int = 220
     allow_intrabar_candidates: bool = True
     allow_closed_bar_candidates: bool = True
     max_alerts_per_underlying_bar: int = 1
@@ -24,6 +25,8 @@ class EngineConfig:
             raise ValueError("min_score must be between 0 and 100")
         if self.min_risk_reward < 0:
             raise ValueError("min_risk_reward cannot be negative")
+        if self.min_history_bars < 220:
+            raise ValueError("min_history_bars must preserve the 220-bar production baseline")
         if self.max_candidate_age_bars < 0:
             raise ValueError("max_candidate_age_bars cannot be negative")
         if self.max_alerts_per_underlying_bar < 1:
