@@ -30,6 +30,10 @@ from engine.adaptive import Adaptive
 from engine.contract_picker import pick_contract, pick_expiry
 from telegram_service import format_signal
 from utils.market_hours import can_signal, IST
+from signal_engine_v2.runtime import create_engine as create_v2_engine, evaluate_legacy_candles
+from signal_engine_v2.models import DecisionState as V2DecisionState
+from signal_engine_v2.risk_gate import risk_context_from_db, validate_daily_risk, limits_from_legacy_config
+from signal_engine_v2.contracts import validate_option_quote
 
 log = logging.getLogger("scanner")
 
@@ -154,6 +158,7 @@ class Scanner:
         self.risk, self.tracker, self.hist = risk, tracker, hist
         self.history_writer = history_writer
         self.adaptive = Adaptive(db)
+        self.v2_engine = create_v2_engine()
         self.ban: Set[str] = set()
         self.last_stats = {}
         self.last_cycle_at: Optional[str] = None
