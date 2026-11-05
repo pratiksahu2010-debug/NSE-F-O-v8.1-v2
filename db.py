@@ -33,6 +33,12 @@ CREATE TABLE IF NOT EXISTS signal_features(signal_id TEXT PRIMARY KEY, day TEXT,
 CREATE TABLE IF NOT EXISTS candles(und TEXT, ts TEXT, o {REAL}, h {REAL}, l {REAL}, c {REAL}, v {REAL}, oi {REAL}, PRIMARY KEY(und, ts));
 CREATE INDEX IF NOT EXISTS ix_sig_und_day ON signals(und, day);
 CREATE INDEX IF NOT EXISTS ix_upd_sig ON signal_updates(signal_id);
+CREATE TABLE IF NOT EXISTS rejection_events(
+    id TEXT PRIMARY KEY, ts TEXT NOT NULL, day TEXT NOT NULL, symbol TEXT NOT NULL,
+    side TEXT, stage TEXT NOT NULL, reason TEXT NOT NULL, detail TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_rejection_day ON rejection_events(day);
+CREATE INDEX IF NOT EXISTS ix_rejection_symbol_day ON rejection_events(symbol, day);
 """
 
 
@@ -368,6 +374,70 @@ class DB:
         self._x("INSERT INTO signal_updates(signal_id,ts,kind,premium,note) VALUES(?,?,?,?,?)",
                 (signal_id, market_now().isoformat(timespec="seconds"), kind, premium, note))
 
+    # ---- durable rejection and activity accounting ----
+    def record_rejection(self, event_id: str, ts: str, day: str, symbol: str,
+                         side: str, stage: str, reason: str, detail: str = ""):
+        """Persist one deduplicated rejected candidate; event_id is stable within a scan cycle."""
+        self._x(
+            "INSERT INTO rejection_events(id,ts,day,symbol,side,stage,reason,detail) "
+            "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING",
+            (str(event_id), str(ts), str(day), str(symbol or ""), str(side or ""),
+             str(stage or "unknown"), str(reason or "unknown"), str(detail or "")[:500]),
+        )
+
+    def activity_summary(self, day: str) -> dict:
+        """Separate generated/delivered signals, SL/target outcomes and rejected setups."""
+        signal_rows = self._q("SELECT status,data FROM signals WHERE day=?", (day,))
+        by_strategy = {}
+        by_symbol = {}
+        for row in signal_rows:
+            try:
+                data = json.loads(row["data"])
+            except (TypeError, ValueError):
+                data = {}
+            strategy = str(data.get("strategy") or "UNKNOWN")
+            symbol = str(data.get("underlying") or "")
+            by_strategy[strategy] = by_strategy.get(strategy, 0) + 1
+            if symbol:
+                by_symbol[symbol] = by_symbol.get(symbol, 0) + 1
+
+        update_rows = self._q(
+            "SELECT u.kind,COUNT(*) AS n FROM signal_updates u "
+            "JOIN signals s ON s.id=u.signal_id WHERE s.day=? GROUP BY u.kind",
+            (day,),
+        )
+        updates = {str(row["kind"]).upper(): int(row["n"]) for row in update_rows}
+        delivery_rows = self._q(
+            "SELECT o.status,COUNT(*) AS n FROM telegram_outbox o "
+            "JOIN signals s ON s.id=o.signal_id WHERE s.day=? GROUP BY o.status",
+            (day,),
+        )
+        delivery = {str(row["status"]).upper(): int(row["n"]) for row in delivery_rows}
+        reject_rows = self._q(
+            "SELECT reason,COUNT(*) AS n FROM rejection_events WHERE day=? GROUP BY reason ORDER BY n DESC",
+            (day,),
+        )
+        reject_symbols = self._q(
+            "SELECT symbol,COUNT(*) AS n FROM rejection_events WHERE day=? GROUP BY symbol ORDER BY n DESC",
+            (day,),
+        )
+        rejected = sum(int(row["n"]) for row in reject_rows)
+        return {
+            "day": day,
+            "signals_generated": len(signal_rows),
+            "signals_by_strategy": dict(sorted(by_strategy.items())),
+            "signals_by_symbol": dict(sorted(by_symbol.items())),
+            "telegram_deliveries": {"delivered": delivery.get("DELIVERED", 0),
+                                    "pending": delivery.get("PENDING", 0),
+                                    "failed_attempts": delivery.get("FAILED", 0)},
+            "outcomes": {"stop_loss_hits": updates.get("SL", 0) + updates.get("UND_SL", 0),
+                         "target1_hits": updates.get("T1", 0), "target2_hits": updates.get("T2", 0),
+                         "time_exits": updates.get("TIME", 0), "all_update_events": updates},
+            "rejected_setups": {"total": rejected,
+                                "by_reason": {str(row["reason"]): int(row["n"]) for row in reject_rows},
+                                "by_symbol": {str(row["symbol"]): int(row["n"]) for row in reject_symbols}},
+        }
+
     # ---- OI snapshots ----
     def save_oi(self, ts: str, und: str, expiry: str, spot: float, pcr: float, call_oi: float, put_oi: float,
                 call_wall: float, put_wall: float, atm_iv: float):
@@ -404,3 +474,5 @@ class DB:
         candle_cutoff = (market_now() - timedelta(days=cfg.CANDLE_KEEP_DAYS)).date().isoformat()
         self._x("DELETE FROM candles WHERE substr(ts,1,10) < ?", (candle_cutoff,))
         self._x("DELETE FROM signal_updates WHERE signal_id IN (SELECT id FROM signals WHERE day < ?)", (day_cutoff,))
+        rejection_cutoff = (market_now() - timedelta(days=30)).date().isoformat()
+        self._x("DELETE FROM rejection_events WHERE day < ?", (rejection_cutoff,))
