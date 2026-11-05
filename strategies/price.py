@@ -364,7 +364,16 @@ def invalidation_distance(side: str, session: List[Candle], allc: List[Candle], 
             swing_level, trigger_level, e9_values[-1] if e9_values else 0.0,
             vw_values[-1] if vw_values else 0.0,
         ) if x > 0 and (x < spot if sgn > 0 else x > spot)]
-        level = (max(candidates) if sgn > 0 else min(candidates)) if candidates else swing_level
+        if candidates:
+            # Keep the nearest valid structural reference, but never put a
+            # Normal/SIMPLE stop inside the signal/partial trigger candle.
+            # CALL invalidation must be at or below its trigger low; PUT
+            # invalidation must be at or above its trigger high. The risk
+            # envelope below still rejects a wick that makes the stop too wide.
+            nearest = max(candidates) if sgn > 0 else min(candidates)
+            level = min(nearest, trigger_level) if sgn > 0 else max(nearest, trigger_level)
+        else:
+            level = swing_level
     else:
         # Select the nearest valid support/resistance behind the entry, not simply
         # max(EMA21, VWAP), which can select a level on the wrong side of price.
