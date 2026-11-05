@@ -1289,8 +1289,14 @@ class Scanner:
             log.exception("signal %s saved but Telegram outbox enqueue failed", sig.id)
             return False
         log.info("telegram alert queued | signal_id=%s | chats=%d", sig.id, len(chats))
-        self._deliver_pending_outbox()
-        status = self.db.telegram_delivery_status(dedupe_key)
+        try:
+            self._deliver_pending_outbox()
+            status = self.db.telegram_delivery_status(dedupe_key)
+        except Exception as exc:
+            self._note_symbol(sig.underlying, "telegram", "outbox status check failed",
+                              f"{type(exc).__name__}: {exc}"[:180])
+            log.exception("signal %s is queued but delivery status could not be confirmed", sig.id)
+            return False
         if status.get("all_delivered"):
             self._mark_alerted(dedupe_key)
             self._watch(sig.underlying, sig.side, datetime.fromisoformat(sig.ts) - timedelta(minutes=cfg.SCAN_MINUTES),
