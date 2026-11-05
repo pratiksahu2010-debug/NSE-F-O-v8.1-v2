@@ -1,41 +1,19 @@
-import os
-import unittest
-
-os.environ.setdefault("DB_PATH", ":memory:")
-
-from bot import select_bounded_universe
-from models import Underlying
+"""The configured stock universe is fixed and de-duplicated at bootstrap."""
+from strategies.mex_universe import MEX_SYMBOLS
+from strategies.normal_universe import NORMAL_SYMBOLS
+from strategies.orb_universe import ORB_SYMBOLS
 
 
-def und(name, kind="STOCK"):
-    return Underlying(name=name, kind=kind, spot_key=f"key:{name}")
+def test_fixed_universe_is_deduplicated_and_normal_is_subset():
+    union = list(dict.fromkeys((*NORMAL_SYMBOLS, *MEX_SYMBOLS, *ORB_SYMBOLS)))
+    assert len(MEX_SYMBOLS) == 100
+    assert len(ORB_SYMBOLS) == 100
+    assert len(union) == 100
+    assert set(NORMAL_SYMBOLS).issubset(set(union))
 
 
-class TestBoundedUniverse(unittest.TestCase):
-    def test_caps_total_symbols_including_indices(self):
-        indices = [und("NIFTY", "INDEX"), und("BANKNIFTY", "INDEX")]
-        stocks = [und(f"S{i}") for i in range(60)]
-        selected = select_bounded_universe(indices, stocks, [f"S{i}" for i in range(50)], [], 40)
-        self.assertEqual(len(selected), 40)
-        self.assertEqual([x.name for x in selected[:2]], ["NIFTY", "BANKNIFTY"])
-        self.assertEqual(selected[-1].name, "S37")
-
-    def test_does_not_fill_slots_from_unranked_master_order(self):
-        indices = [und("NIFTY", "INDEX")]
-        stocks = [und("A"), und("B"), und("C")]
-        selected = select_bounded_universe(indices, stocks, ["B"], [], 40)
-        self.assertEqual([x.name for x in selected], ["NIFTY", "B"])
-
-    def test_priority_symbols_are_additive_and_deduplicated(self):
-        indices = [und("NIFTY", "INDEX")]
-        stocks = [und("A"), und("B")]
-        selected = select_bounded_universe(indices, stocks, ["A"], ["A", "B"], 3)
-        self.assertEqual([x.name for x in selected], ["NIFTY", "A", "B"])
-
-    def test_zero_or_negative_cap_is_safe(self):
-        self.assertEqual(select_bounded_universe([und("NIFTY", "INDEX")], [], [], [], 0), [])
-        self.assertEqual(select_bounded_universe([und("NIFTY", "INDEX")], [], [], [], -3), [])
-
-
-if __name__ == "__main__":
-    unittest.main()
+def test_all_strategy_universes_use_valid_symbol_strings():
+    for symbol in (*NORMAL_SYMBOLS, *MEX_SYMBOLS, *ORB_SYMBOLS):
+        assert symbol
+        assert symbol == symbol.upper()
+        assert " " not in symbol
