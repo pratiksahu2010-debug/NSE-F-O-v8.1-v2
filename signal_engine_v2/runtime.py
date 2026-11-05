@@ -84,3 +84,20 @@ def build_option_signal(candidate, master, underlying, chain, now,
         current_underlying_price, provider=provider, iv_rank=iv_rank,
         fut_price=fut_price, min_target_rr=1.5,
     )
+
+
+def finalize_decision(engine: SignalPipeline, decision: SignalDecision,
+                      master, underlying, chain, now,
+                      atr_value: float, current_underlying_price: float,
+                      provider: str = "", iv_rank=None, fut_price: float = 0.0,
+                      policy: Optional[ContractPolicy] = None):
+    """Run final chain/contract/risk checks; release dedup reservation on failure."""
+    if decision.state is DecisionState.REJECTED:
+        return None, "candidate_already_rejected"
+    signal, reason = build_option_signal(
+        decision.candidate, master, underlying, chain, now, atr_value,
+        current_underlying_price, provider, iv_rank, fut_price, policy,
+    )
+    if signal is None:
+        engine.release(decision)
+    return signal, reason
