@@ -59,16 +59,22 @@ def score_momentum_orb(session, allc):
         # A failed early break must not permanently consume the ORB. A fresh
         # reclaim/re-break is valid after price has returned inside the range.
         fresh = side * (previous_close - edge) <= 0
-        accepted = side * (last.c - edge) > 0
+        clearance = side * (last.c - edge) / av
+        accepted = clearance >= float(getattr(cfg, "MEX_ORB_CLEARANCE_ATR", 0.05))
         candle_direction = side * (last.c - last.o) > 0
-        close_strength = cp >= 0.65 if side > 0 else cp <= 0.35
-        not_chasing = side * (last.c - e9) / av <= cfg.MEX_ORB_MAX_EXTENSION_ATR
-        if fresh and accepted and candle_direction and close_strength and body >= 0.45 and not_chasing:
-            clearance = side * (last.c - edge) / av
+        close_threshold = float(getattr(cfg, "MEX_ORB_CLOSE_POS", 0.75))
+        close_strength = cp >= close_threshold if side > 0 else cp <= (1.0 - close_threshold)
+        extension = side * (last.c - e9) / av
+        not_chasing = extension <= cfg.MEX_ORB_MAX_EXTENSION_ATR
+        if (fresh and accepted and candle_direction and close_strength
+                and body >= float(getattr(cfg, "MEX_ORB_BODY_MIN", 0.55)) and not_chasing):
             metrics = {"orb_high": hi, "orb_low": lo, "orb_width": width,
                        "atr": av, "breakout_clearance_atr": clearance,
                        "range_expansion": current_range / max(base_range, 1e-12),
-                       "ema9": e9, "close_position": cp, "body_fraction": body}
+                       "ema9": e9, "extension_atr": extension,
+                       "relative_volume": (last.v / (sum(x.v for x in allc[-21:-1] if x.v > 0) / max(1, sum(1 for x in allc[-21:-1] if x.v > 0)))
+                                            if last.v > 0 and any(x.v > 0 for x in allc[-21:-1]) else None),
+                       "close_position": cp, "body_fraction": body}
             return side, 85.0, (
                 f"ORB {'LONG' if side > 0 else 'SHORT'} breakout accepted beyond "
                 f"{edge:.2f}; retest preferred but not mandatory"
