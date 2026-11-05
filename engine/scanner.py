@@ -1586,9 +1586,10 @@ class Scanner:
         # Normal/SIMPLE uses the same nearby structural invalidation reference as
         # the legacy trend path (EMA9, session VWAP, or trigger-candle extreme).
         # RiskRules still rejects stops outside its permitted ATR envelope.
-        stop_dist = invalidation_distance(side, c["session"], c["allc"], spot, strategy)
-        lv = self.risk.levels(px, q.delta, a5, contract.tick_size, side, spot, stop_dist)
         required_rr = max(float(cfg.MIN_RR_T1), float(getattr(cfg, "SIMPLE_MIN_RR_T1", 1.5))) if is_simple else float(cfg.MIN_RR_T1)
+        stop_dist = invalidation_distance(side, c["session"], c["allc"], spot, strategy)
+        lv = self.risk.levels(px, q.delta, a5, contract.tick_size, side, spot, stop_dist,
+                              min_target_rr=required_rr if is_simple else None)
         if not lv or float(lv.get("rr", 0.0)) < float(cfg.MIN_RR_T1):
             self._watch(u.name, side, entry_bar.ts, c["ps"], "INVALIDATED", score_10, score_reasons + ["risk/reward validation failed"], now)
             return self._reject("risk levels rejected", u.name, side)
