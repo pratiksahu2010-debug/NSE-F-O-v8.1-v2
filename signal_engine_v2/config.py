@@ -25,8 +25,8 @@ class EngineConfig:
     def __post_init__(self):
         if not 0 <= self.min_score <= 100:
             raise ValueError("min_score must be between 0 and 100")
-        if self.min_adx < 0:
-            raise ValueError("min_adx cannot be negative")
+        if self.min_adx < 22.0:
+            raise ValueError("min_adx cannot be lower than the production floor of 22")
         if self.max_entry_extension_atr <= 0:
             raise ValueError("max_entry_extension_atr must be positive")
         if self.min_risk_reward < 0:
