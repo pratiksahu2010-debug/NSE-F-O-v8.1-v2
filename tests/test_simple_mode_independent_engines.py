@@ -301,3 +301,35 @@ def test_simple_structural_stop_never_sits_inside_trigger_bar():
     # The 0.25 ATR buffer is added beyond the live wick in both directions.
     assert call_distance == 1.25
     assert put_distance == 1.25
+
+def test_tracker_records_premium_and_underlying_mae_mfe_in_r():
+    from engine import tracker as tracker_module
+    from models import Signal
+
+    tracker = tracker_module.Tracker.__new__(tracker_module.Tracker)
+    tracker.db = Mock()
+    tracker.active = {}
+    tracker._last_prem = {}
+    tracker._lock = threading.Lock()
+    tracker.ws = None
+    tracker.tg = Mock()
+    signal = Signal(
+        id="RELIANCE-20261105T100000-C", underlying="RELIANCE", side="CALL",
+        ltp=10.0, sl=8.0, t1=20.0, t2=30.0, cur_sl=8.0,
+        spot=100.0, und_sl=96.0, prem_high=10.0,
+    )
+    now = datetime(2026, 11, 5, 10, 10, tzinfo=IST)
+
+    with patch.object(tracker_module, "past_exit_time", return_value=False):
+        tracker.evaluate(signal, 9.5, 99.5, now)
+        tracker.evaluate(signal, 11.0, 102.0, now + timedelta(seconds=4))
+
+    assert signal.prem_low == 9.5
+    assert signal.prem_high == 11.0
+    assert signal.spot_low == 99.5
+    assert signal.spot_high == 102.0
+    assert signal.premium_mae_r == 0.25
+    assert signal.premium_mfe_r == 0.5
+    assert signal.underlying_mae_r == 0.125
+    assert signal.underlying_mfe_r == 0.5
+    assert tracker.db.save_signal.call_count == 2
