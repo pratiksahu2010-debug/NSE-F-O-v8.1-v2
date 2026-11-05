@@ -26,6 +26,8 @@ services:
         value: "SIMPLE"             # SIMPLE = EMA 9/21 + VWAP + RSI + ADX>=25 (default); LEGACY = old multi-engine stack
       - key: SIMPLE_ADX_MIN
         value: "25"
+      - key: LIVE_INTRABAR_ENABLED
+        value: "true"              # enable websocket partial-candle triggers for SIMPLE, MEX and ORB
       - key: CANDLE_READY_RETRIES
         value: "4"                  # V8.1: wait for the just-closed candle instead of discarding the symbol as stale
       - key: CANDLE_READY_WAIT_SEC
