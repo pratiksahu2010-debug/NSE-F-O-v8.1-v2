@@ -156,3 +156,21 @@ def test_normal_15m_context_requires_matching_bullish_or_bearish_direction():
 
     assert matches("UNKNOWN", 1) is False
 
+
+
+def test_normal_structural_invalidation_distance_is_available_for_both_directions():
+    from strategies.price import invalidation_distance
+
+    now = datetime(2026, 11, 5, 12, 0, tzinfo=IST)
+    candles = []
+    for i in range(40):
+        close = 100.0 + i * 0.5
+        candles.append(Candle(now - timedelta(minutes=5 * (39 - i)),
+                              close - 0.2, close + 1.0, close - 1.0,
+                              close, 1000, 0))
+
+    call_distance = invalidation_distance("CALL", candles, candles, 120.0, "TREND")
+    put_distance = invalidation_distance("PUT", candles, candles, 119.0, "TREND")
+
+    assert call_distance > 0
+    assert put_distance > 0
