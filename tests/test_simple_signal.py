@@ -79,6 +79,14 @@ class TestSimpleRule(unittest.TestCase):
         self.assertEqual(r["side"], 0)
         self.assertIn("PUT:rsi", r["gate_failures"])
 
+
+    def test_opposing_15m_context_rejects_but_neutral_context_does_not_veto(self):
+        opposed = at_bar(1, 3, context_15m=-1)
+        self.assertEqual(opposed["side"], 0)
+        self.assertIn("CALL:15m_context_opposed", opposed["gate_failures"])
+        neutral = at_bar(1, 3, context_15m=0)
+        self.assertEqual(neutral["side"], 1, neutral["reason"])
+
     def test_vwap_side_is_a_gate(self):
         # Candle 7 of the fixture closes below VWAP while EMA9 > EMA21: no CALL.
         r = at_bar(1, 7)
