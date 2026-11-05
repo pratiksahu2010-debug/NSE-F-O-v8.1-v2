@@ -1756,12 +1756,25 @@ class Scanner:
         # Retain OI-wall levels as informational alert metadata only; they never veto a signal.
         res, sup = chain.wall("CE"), chain.wall("PE")
         ivr = calc_iv_rank(chain.atm_iv(), self.db.iv_hist(u.name))
-        contract, q, why = pick_contract(self.master, u, side, chain, now, ivr)
+        if is_v2:
+            strict_selection, why = select_validated_contract(
+                self.master, u, side, chain, datetime.now(IST), iv_rank=ivr
+            )
+            contract = strict_selection.contract if strict_selection else None
+            q = strict_selection.quote if strict_selection else None
+        else:
+            contract, q, why = pick_contract(self.master, u, side, chain, now, ivr)
         if not contract:
             self._watch(u.name, side, entry_bar.ts, c["ps"], "INVALIDATED", score_10, score_reasons + [f"contract rejected: {why}"], now)
             return self._reject("contract rejected", u.name, f"{side} ({why})")
         # A buy entry must be priced from the current ask. Never substitute LTP:
         # the last trade may be stale or below the price currently available to buy.
+        if is_v2:
+            quote_ok, quote_reason = validate_option_quote(q, u)
+            if not quote_ok:
+                self._watch(u.name, side, entry_bar.ts, c["ps"], "INVALIDATED",
+                            score_10, score_reasons + [f"strict quote gate: {quote_reason}"], now)
+                return self._reject("strict option quote gate", u.name, quote_reason)
         px = _executable_buy_price(q)
         if px is None:
             self._watch(u.name, side, entry_bar.ts, c["ps"], "INVALIDATED", score_10, score_reasons + ["no executable option price"], now)
