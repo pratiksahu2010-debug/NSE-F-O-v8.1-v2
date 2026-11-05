@@ -37,9 +37,8 @@ def build_snapshot(underlying: str, instrument_kind: str, timeframe: str,
 
     volume_map = futures_volume_by_timestamp or {}
     if instrument_kind.upper() == "INDEX" and volume_map:
-        today_bars = [b for b in analysis_bars if b.timestamp.date() == current.timestamp.date()]
-        covered = sum(1 for b in today_bars if float(volume_map.get(b.timestamp, 0) or 0) > 0)
-        if today_bars and covered >= 0.8 * len(today_bars):
+        covered = sum(1 for b in analysis_bars if float(volume_map.get(b.timestamp, 0) or 0) > 0)
+        if analysis_bars and covered >= 0.8 * len(analysis_bars):
             analysis_bars = [replace(b, volume=max(0.0, float(volume_map.get(b.timestamp, 0) or 0)))
                              for b in analysis_bars]
             details["volume_source"] = "current_month_future_volume"
