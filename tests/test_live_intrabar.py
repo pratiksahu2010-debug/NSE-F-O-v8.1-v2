@@ -273,7 +273,8 @@ def test_live_orb_triggers_on_partial_breakout_with_50_percent_body_and_65_perce
         patch.object(live_module, "adx", return_value=[(25.0, 20.0, 10.0)] * len(completed)),
         patch.object(live_module, "rsi", return_value=[55.0] * len(completed)),
     ):
-        result = LiveIntrabarEngine().detect(
+        engine = LiveIntrabarEngine()
+        result = engine.detect(
             und, session, completed, partial, now, cfg,
             allow_sequential=False, allow_mex=False, allow_orb=True,
         )
