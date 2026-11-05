@@ -1498,7 +1498,12 @@ class Scanner:
         if lock is None or not lock.acquire(blocking=False):
             return self._reject("symbol evaluation busy", und.name)
         try:
-            result = self._evaluate_locked(c, vix, now, pre)
+            try:
+                result = self._evaluate_locked(c, vix, now, pre)
+            except Exception:
+                if c.get("v2_decision") is not None:
+                    self.v2_engine.release(c["v2_decision"])
+                raise
             if result is None and c.get("v2_decision") is not None:
                 self.v2_engine.release(c["v2_decision"])
             return result
