@@ -55,10 +55,18 @@ class TestMomentumExplosion(unittest.TestCase):
             })
 
     def test_missing_relative_volume_is_diagnostic_not_a_hard_gate(self):
-        history, session = trend_scenario(1)
-        for candle in history + session:
-            candle.v = 0
-        points, reason, details = score_momentum_explosion(1, session, history + session)
+        allc, price = [], 25000.0
+        start = datetime(2026, 10, 15, 9, 15, tzinfo=IST)
+        for i in range(45):
+            step = 0.5 if i % 2 == 0 else -0.25
+            o, close = price, price + step
+            allc.append(Candle(start + timedelta(minutes=5 * i), o,
+                               max(o, close) + 0.7, min(o, close) - 0.7,
+                               close, 0))
+            price = close
+        allc.append(Candle(start + timedelta(minutes=5 * len(allc)), price,
+                           price + 3.3, price - 0.3, price + 3.0, 0))
+        points, reason, details = score_momentum_explosion(1, allc[-20:], allc)
         self.assertGreater(points, 0.0, reason)
         self.assertIsNone(details.get("relative_volume"))
 
