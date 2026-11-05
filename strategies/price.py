@@ -10,6 +10,7 @@ A fresh trigger is required: recent EMA cross, pullback-resume at EMA9, or a bre
 REVERSAL is a separate counter-trend setup requiring a prior EMA21 stretch, an RSI extreme and turn, a strong
 reversal candle breaking the previous candle's extreme, and confirmation from structure/participation.
 """
+import math
 from typing import List, Optional, Tuple
 
 from config import cfg
