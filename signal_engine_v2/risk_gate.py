@@ -77,3 +77,39 @@ def limits_from_legacy_config() -> RiskLimits:
         symbol_cooldown_minutes=int(cfg.SYMBOL_COOLDOWN_MIN),
         block_same_side_after_loss=bool(cfg.BLOCK_SAME_SIDE_AFTER_LOSS),
     )
+
+
+def risk_context_from_db(db, now: datetime) -> RiskContext:
+    """Build restart-safe daily risk state from the existing persisted Signal table."""
+    day = now.date().isoformat()
+    signals = db.signals_on(day)
+    active = [s for s in signals if str(getattr(s, "status", "")).upper() in ("ACTIVE", "T1_HIT")]
+    losses = [s for s in signals if str(getattr(s, "result", "")).upper() == "LOSS"]
+    last_signal_at = {}
+    stopped_out = set()
+    for signal in signals:
+        symbol = str(getattr(signal, "underlying", "")).upper()
+        if not symbol:
+            continue
+        try:
+            stamp = datetime.fromisoformat(str(signal.ts))
+            if stamp.tzinfo is None and now.tzinfo is not None:
+                stamp = stamp.replace(tzinfo=now.tzinfo)
+            previous = last_signal_at.get(symbol)
+            if previous is None or stamp > previous:
+                last_signal_at[symbol] = stamp
+        except (TypeError, ValueError, OverflowError):
+            pass
+        if str(getattr(signal, "result", "")).upper() == "LOSS":
+            exit_reason = str(getattr(signal, "exit_reason", "")).upper()
+            if "SL" in exit_reason or "STOP" in exit_reason:
+                stopped_out.add((symbol, str(getattr(signal, "side", "")).upper()))
+    active_by_group = {}
+    for signal in active:
+        group = correlation_group(str(getattr(signal, "underlying", "")))
+        active_by_group[group] = active_by_group.get(group, 0) + 1
+    return RiskContext(
+        now=now, daily_signals=len(signals), daily_losses=len(losses),
+        active_signals=len(active), active_by_group=active_by_group,
+        last_signal_at=last_signal_at, stopped_out_sides=frozenset(stopped_out),
+    )
