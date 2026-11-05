@@ -336,6 +336,28 @@ class LiveIntrabarEngine:
                 max_entry_extension_atr=float(getattr(cfg, "SIMPLE_MAX_EXTENSION_ATR", 1.5)),
                 context_15m=htf_bias(completed_all, cfg.HTF_MINUTES),
             )
+            # Surface SIMPLE live-trigger activity in the same diagnostics
+            # snapshot as the legacy Normal detector. Otherwise live SIMPLE
+            # could be evaluating every tick while its diagnostic counters stay zero.
+            with self._lock:
+                stats = self._normal_stats
+                stats["evaluated"] += 1
+                if simple_result.get("side") in (1, -1):
+                    stats["detected"] += 1
+                    setup_name = str(simple_result.get("setup_type") or "SIMPLE_TREND")
+                    stats["setups"][setup_name] = stats["setups"].get(setup_name, 0) + 1
+                else:
+                    stats["no_trigger"] += 1
+                    for gate in simple_result.get("gate_failures", []):
+                        stats["gate_failures"][gate] = stats["gate_failures"].get(gate, 0) + 1
+                stats["latest"][und.name] = {
+                    "reason": simple_result.get("reason", ""),
+                    "setup_type": simple_result.get("setup_type") or "SIMPLE_TREND",
+                    "gate_failures": list(simple_result.get("gate_failures", [])),
+                    "metrics": dict(simple_result.get("metrics") or {}),
+                }
+                if len(stats["latest"]) > 100:
+                    stats["latest"].pop(next(iter(stats["latest"])))
             if simple_result.get("side") in (1, -1):
                 side = "CALL" if simple_result["side"] > 0 else "PUT"
                 strategy = "SIMPLE_TREND"
