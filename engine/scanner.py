@@ -808,6 +808,61 @@ class Scanner:
                     self.mkt_ret = ctx.session_return_pct(session)
                 except Exception:
                     log.exception("NIFTY market-bias update failed; keeping the previous value")
+            if cfg.V2_ENGINE_ENABLED:
+                try:
+                    volume_map = {bar.ts: bar.v for bar in fut} if fut else {}
+                    decisions = evaluate_legacy_candles(
+                        self.v2_engine, u.name, u.kind, "5m", allc,
+                        futures_volume_by_timestamp=volume_map,
+                        session_candles=session,
+                        metadata={"market_bias": self.mkt_bias, "group": u.group,
+                                  "provider": getattr(self.fo, "active_name", "UPSTOX")},
+                    )
+                    eligible = [d for d in decisions if d.state in (
+                        V2DecisionState.CONFIRMED, V2DecisionState.EARLY)]
+                    if not eligible:
+                        counts["insufficient_or_no_price_setup"] += 1
+                        for decision in decisions:
+                            for reason in decision.rejected_reasons:
+                                self._why[reason] = self._why.get(reason, 0) + 1
+                        self._note_symbol(u.name, "v2", "no qualifying unified setup")
+                        continue
+                    decision = max(eligible, key=lambda d: (d.candidate.score,
+                                                            -d.candidate.strategy_priority))
+                    candidate = decision.candidate
+                    side_name = candidate.side.value
+                    side_sign = 1 if side_name == "CALL" else -1
+                    score_fraction = candidate.score / 100.0
+                    reason = "; ".join(candidate.reasons) or candidate.strategy
+                    vote = Vote("V2_ENGINE", side_sign * score_fraction, reason)
+                    confirm = candidate.candle_timestamp.isoformat()
+                    entry_contract = {
+                        "symbol": u.name, "strategy": candidate.strategy,
+                        "side": side_name,
+                        "mode": "INTRABAR" if candidate.candle_state.value == "INTRABAR" else "CLOSED_BAR",
+                        "setup_time": confirm, "trigger_time": confirm,
+                        "confirmation_time": confirm,
+                        "confirmation_price": float(candidate.entry),
+                        "timeframe": "5m", "setup_id": candidate.setup_id,
+                    }
+                    self._watch(u.name, side_name, candidate.candle_timestamp,
+                                side_sign * score_fraction, "WATCHING",
+                                reasons=list(candidate.reasons), now=now)
+                    out.append({
+                        "u": u, "ps": side_sign * score_fraction, "votes": [vote],
+                        "session": session, "allc": allc, "fut": fut,
+                        "v7_decision": None, "selected_engine": "V2_ENGINE",
+                        "normal_metrics": {}, "momentum_orb_metrics": {},
+                        "mex_metrics": {}, "entry_candidate": entry_contract,
+                        "v2_candidate": candidate, "v2_decision": decision,
+                    })
+                    counts["v2_candidates"] = counts.get("v2_candidates", 0) + 1
+                except Exception as exc:
+                    counts["evaluation_errors"] += 1
+                    self._note_symbol(u.name, "v2", "unified engine evaluation error",
+                                      f"{type(exc).__name__}: {exc}"[:160])
+                    log.exception("v2 strategy evaluation failed | symbol=%s", u.name)
+                continue
             # Keep the configured Normal engine exactly as selected, then run
             # MEX and ORB independently for their own universes in BOTH modes.
             if cfg.STRATEGY_MODE != "LEGACY":
