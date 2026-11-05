@@ -23,7 +23,8 @@ def test_runtime_evaluates_candidate_without_portfolio_caps():
                         101+i*.01, 99+i*.01, 100.5+i*.01, 1000, True)
                  for i in range(230))
     bar = bars[-1]
-    snap = MarketSnapshot("NIFTY", "INDEX", "5m", bar, bars)
+    snap = MarketSnapshot("NIFTY", "INDEX", "5m", bar, bars,
+                          indicators={"adx_14": 25.0, "ema_21": bar.close, "atr_14": 1.0})
     engine = SignalPipeline([OneCandidate()], EngineConfig(unified_scoring_enabled=False))
     decisions = evaluate_snapshot(engine, snap)
     assert any(x.state is DecisionState.CONFIRMED for x in decisions)
