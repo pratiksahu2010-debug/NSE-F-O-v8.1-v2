@@ -115,7 +115,7 @@ def test_regime_classification_uses_directional_trend():
 def test_impulse_detector_labels_multi_factor_expansion():
     from types import SimpleNamespace
     from signal_engine_v2.impulse_detector import detect_impulse
-    candle = SimpleNamespace(high=106.0, low=100.0)
+    candle = SimpleNamespace(open=101.0, high=106.0, low=100.0, close=105.0)
     values = {"atr_14": 3.0, "rvol_20": 2.0, "adx_14": 28.0,
               "adx_slope_3": 3.0, "ema_9": 105.0, "ema_21": 103.0,
               "macd_hist": 1.2, "macd_hist_prev": 0.5}
