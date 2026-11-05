@@ -417,15 +417,17 @@ class Scanner:
 
     def _detect_live_candidate(self, und, partial, now, cached):
         try:
-            # SIMPLE keeps its own closed-candle Normal rule; independent MEX/ORB
-            # detectors remain eligible for live triggers in either strategy mode.
+            # SIMPLE uses its own EMA/VWAP/RSI/ADX live trigger; LEGACY keeps
+            # the separate Normal detector. MEX and ORB remain independent.
             allow_sequential = (cfg.STRATEGY_MODE == "LEGACY" and
                                 (und.kind == "INDEX" or und.name in NORMAL_SYMBOL_SET))
+            allow_simple = cfg.STRATEGY_MODE != "LEGACY"
             allow_mex = und.name in self.mex.universe
             allow_orb = und.name in self.momentum_orb.universe
             candidate = self.live_engine.detect(und, cached["session"], cached["allc"], partial, now, cfg,
                                                 allow_sequential=allow_sequential,
-                                                allow_mex=allow_mex, allow_orb=allow_orb)
+                                                allow_mex=allow_mex, allow_orb=allow_orb,
+                                                allow_simple=allow_simple)
             if not candidate:
                 return
             strategy = candidate["strategy"]
