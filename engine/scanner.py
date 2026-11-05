@@ -1161,6 +1161,10 @@ class Scanner:
     def _maintenance_connection(self):
         """Create one isolated database client shared only by background maintenance workers."""
         with self._maintenance_db_lock:
+            # Injected in-memory databases are deliberately shared by test workers;
+            # opening a second production PostgreSQL connection would be invalid.
+            if getattr(self.db, "_test_injected", False):
+                return self.db
             if self._outbox_db is None:
                 from db import DB
                 self._outbox_db = DB(initialize_schema=False)
@@ -1597,7 +1601,7 @@ class Scanner:
             underlying_risk = abs(spot - float(lv.get("und_sl") or 0.0))
             underlying_reward = (float(lv.get("und_t1") or 0.0) - spot) * (1 if side == "CALL" else -1)
             first_target_rr = underlying_reward / underlying_risk if underlying_risk > 0 else 0.0
-            if underlying_reward <= 0 or first_target_rr < required_rr:
+            if underlying_reward <= 0 or first_target_rr + 1e-9 < required_rr:
                 detail = f"Normal first-target RR {first_target_rr:.2f} below required {required_rr:.2f}"
                 self._watch(u.name, side_hint, entry_bar.ts, c["ps"], "INVALIDATED", score_10, score_reasons + [detail], now)
                 return self._reject("normal minimum reward/risk", u.name, detail)
