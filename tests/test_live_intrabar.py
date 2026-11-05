@@ -244,7 +244,7 @@ def _live_detector_fixture():
         if i < 3:
             session.append(Candle(ts, 100.0, 102.0, 98.0, 101.0, 1000.0))
         else:
-            session.append(Candle(ts, 101.0, 101.5, 100.5, 101.0, 1000.0))
+            session.append(Candle(ts, 101.0, 101.25, 100.75, 101.0, 1000.0))
     return now, session, prior + session
 
 
@@ -294,7 +294,7 @@ def test_live_mex_uses_configured_impulse_and_range_expansion_without_macd_veto(
     # Last eight completed candles are a tight base; the live partial candle
     # expands 2x, breaks its high and produces a 0.8 ATR directional impulse.
     partial = Candle(now.replace(minute=0, second=0, microsecond=0),
-                     100.2, 101.1, 100.1, 101.0, 20.0)
+                     101.7, 102.6, 101.6, 102.5, 20.0)
     cfg = SimpleNamespace(
         V7_MIN_BARS=50, MOMENTUM_ORB_ENABLED=False, MEX_ENABLED=True,
         MEX_LOOKBACK=8, MEX_COMPRESSION_MAX=0.90,
