@@ -52,7 +52,12 @@ class Telegram:
                                         json={"chat_id": chat, "text": chunk, "parse_mode": "HTML",
                                               "disable_web_page_preview": True}, timeout=8)
                         if r.status_code == 429:
-                            time.sleep(min(5, r.json().get("parameters", {}).get("retry_after", 2)))
+                            retry_after = min(5, r.json().get("parameters", {}).get("retry_after", 2))
+                            self.last_error = f"Telegram HTTP 429 rate limit; retry_after={retry_after}s"
+                            if attempt == 2:
+                                log.warning("Telegram rate limit retries exhausted for chat %s", chat)
+                                break
+                            time.sleep(retry_after)
                             continue
                         payload = r.json() if r.content else {}
                         sent = bool(r.ok and payload.get("ok") is True)

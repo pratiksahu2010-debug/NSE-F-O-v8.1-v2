@@ -309,8 +309,8 @@ class Scanner:
 
     def ingest_live_tick(self, instrument_key: str, tick, received_at):
         """Aggregate ticks and throttle indicator work off the websocket receive loop."""
-        if not cfg.LIVE_INTRABAR_ENABLED or cfg.STRATEGY_MODE != "LEGACY":
-            return                      # the simple rule is closed-candle only; the intrabar detectors are legacy
+        if not cfg.LIVE_INTRABAR_ENABLED:
+            return
         und = self.underlying_by_key.get(instrument_key)
         if und is None:
             fut_und = self.underlying_by_fut_key.get(instrument_key)
@@ -411,7 +411,10 @@ class Scanner:
 
     def _detect_live_candidate(self, und, partial, now, cached):
         try:
-            allow_sequential = und.kind == "INDEX" or und.name in NORMAL_SYMBOL_SET
+            # SIMPLE keeps its own closed-candle Normal rule; independent MEX/ORB
+            # detectors remain eligible for live triggers in either strategy mode.
+            allow_sequential = (cfg.STRATEGY_MODE == "LEGACY" and
+                                (und.kind == "INDEX" or und.name in NORMAL_SYMBOL_SET))
             allow_mex = und.name in self.mex.universe
             allow_orb = und.name in self.momentum_orb.universe
             candidate = self.live_engine.detect(und, cached["session"], cached["allc"], partial, now, cfg,
@@ -762,58 +765,69 @@ class Scanner:
                     self.mkt_ret = ctx.session_return_pct(session)
                 except Exception:
                     log.exception("NIFTY market-bias update failed; keeping the previous value")
+            # Keep the configured Normal engine exactly as selected, then run
+            # MEX and ORB independently for their own universes in BOTH modes.
             if cfg.STRATEGY_MODE != "LEGACY":
                 try:
-                    cand = self._simple_candidate(u, session, allc, fut, now, counts)
+                    simple_cand = self._simple_candidate(u, session, allc, fut, now, counts)
                 except Exception as exc:       # one bad symbol must never abort the whole scan
                     counts["evaluation_errors"] += 1
-                    self._note_symbol(u.name, "stage1", "rule evaluation error", f"{type(exc).__name__}: {exc}"[:160])
+                    self._note_symbol(u.name, "stage1", "simple rule evaluation error",
+                                      f"{type(exc).__name__}: {exc}"[:160])
                     log.exception("simple rule evaluation failed | symbol=%s", u.name)
-                    continue
-                if cand is not None:
-                    out.append(cand)
-                continue
-            # Three independent setup engines. Normal Trend uses the shared
-            # early-trend / pullback / breakout detector for closed and live bars.
-            normal_eligible = u.kind == "INDEX" or u.name in NORMAL_SYMBOL_SET
-            from strategies.normal_trend import evaluate_normal_trend
-            normal_result = evaluate_normal_trend(
-                session, allc,
-                adx_min=float(cfg.NORMAL_ADX_MIN),
-                adx_established=float(cfg.NORMAL_ADX_ESTABLISHED),
-                di_min_gap=float(cfg.NORMAL_DI_MIN_GAP),
-                rsi_long_min=float(cfg.NORMAL_RSI_LONG_MIN),
-                rsi_short_max=float(cfg.NORMAL_RSI_SHORT_MAX),
-                candle_body_min=float(cfg.NORMAL_CANDLE_BODY_MIN),
-                close_pos_min=float(cfg.NORMAL_CLOSE_POS_MIN),
-                pullback_atr=float(cfg.NORMAL_PULLBACK_ATR),
-                max_entry_extension_atr=float(cfg.NORMAL_MAX_EXTENSION_ATR),
-                breakout_lookback=int(cfg.NORMAL_BREAKOUT_LOOKBACK),
-            ) if normal_eligible else {
-                "side": 0, "score": 0.0, "setup_type": None,
-                "reason": "outside normal universe", "metrics": {},
-                "gate_results": {}, "gate_failures": [],
-            }
-            if normal_eligible:
-                diag = self.normal_trend_diagnostics
-                diag["scanned"] += 1
-                if int(normal_result.get("side") or 0) in (1, -1):
-                    diag["detected"] += 1
-                    setup_name = str(normal_result.get("setup_type") or "UNKNOWN")
-                    diag["setups"][setup_name] = diag["setups"].get(setup_name, 0) + 1
-                else:
-                    diag["no_trigger"] += 1
-                    for gate_name in normal_result.get("gate_failures", []):
-                        diag["gate_failures"][gate_name] = diag["gate_failures"].get(gate_name, 0) + 1
-                diag["latest"][u.name] = {
-                    "reason": normal_result.get("reason", ""),
-                    "setup_type": normal_result.get("setup_type"),
-                    "gate_failures": list(normal_result.get("gate_failures", [])),
-                    "metrics": dict(normal_result.get("metrics") or {}),
+                    simple_cand = None
+                simple_diag = self.normal_trend_diagnostics.get("latest", {}).get(u.name, {})
+                normal_result = {
+                    "side": int(simple_cand.get("ps") or 0) if simple_cand else 0,
+                    "score": abs(float(simple_cand.get("ps") or 0.0)) if simple_cand else 0.0,
+                    "setup_type": simple_diag.get("setup_type") or "SIMPLE_TREND",
+                    "reason": simple_diag.get("reason", "no simple trigger"),
+                    "metrics": dict(simple_diag.get("metrics") or {}),
+                    "gate_results": {},
+                    "gate_failures": list(simple_diag.get("gate_failures") or []),
                 }
-                if len(diag["latest"]) > 100:
-                    diag["latest"].pop(next(iter(diag["latest"])))
-                normal_result.setdefault("metrics", {})["context_15m"] = htf_bias(allc, cfg.HTF_MINUTES)
+            else:
+                # Legacy Normal Trend indicator implementation is untouched.
+                normal_eligible = u.kind == "INDEX" or u.name in NORMAL_SYMBOL_SET
+                from strategies.normal_trend import evaluate_normal_trend
+                normal_result = evaluate_normal_trend(
+                    session, allc,
+                    adx_min=float(cfg.NORMAL_ADX_MIN),
+                    adx_established=float(cfg.NORMAL_ADX_ESTABLISHED),
+                    di_min_gap=float(cfg.NORMAL_DI_MIN_GAP),
+                    rsi_long_min=float(cfg.NORMAL_RSI_LONG_MIN),
+                    rsi_short_max=float(cfg.NORMAL_RSI_SHORT_MAX),
+                    candle_body_min=float(cfg.NORMAL_CANDLE_BODY_MIN),
+                    close_pos_min=float(cfg.NORMAL_CLOSE_POS_MIN),
+                    pullback_atr=float(cfg.NORMAL_PULLBACK_ATR),
+                    max_entry_extension_atr=float(cfg.NORMAL_MAX_EXTENSION_ATR),
+                    breakout_lookback=int(cfg.NORMAL_BREAKOUT_LOOKBACK),
+                ) if normal_eligible else {
+                    "side": 0, "score": 0.0, "setup_type": None,
+                    "reason": "outside normal universe", "metrics": {},
+                    "gate_results": {}, "gate_failures": [],
+                }
+                if normal_eligible:
+                    diag = self.normal_trend_diagnostics
+                    diag["scanned"] += 1
+                    if int(normal_result.get("side") or 0) in (1, -1):
+                        diag["detected"] += 1
+                        setup_name = str(normal_result.get("setup_type") or "UNKNOWN")
+                        diag["setups"][setup_name] = diag["setups"].get(setup_name, 0) + 1
+                    else:
+                        diag["no_trigger"] += 1
+                        for gate_name in normal_result.get("gate_failures", []):
+                            diag["gate_failures"][gate_name] = diag["gate_failures"].get(gate_name, 0) + 1
+                    diag["latest"][u.name] = {
+                        "reason": normal_result.get("reason", ""),
+                        "setup_type": normal_result.get("setup_type"),
+                        "gate_failures": list(normal_result.get("gate_failures", [])),
+                        "metrics": dict(normal_result.get("metrics") or {}),
+                    }
+                    if len(diag["latest"]) > 100:
+                        diag["latest"].pop(next(iter(diag["latest"])))
+                    normal_result.setdefault("metrics", {})["context_15m"] = htf_bias(allc, cfg.HTF_MINUTES)
+            # Independent strategy detectors run regardless of Normal mode.
             mex_result = self.mex.scan(u.name, session, allc)
             mex_sgn, mex_score = mex_result.get("sgn"), mex_result.get("score")
             mex_state, mex_live = mex_result.get("state"), mex_result.get("live") or {}
@@ -832,19 +846,30 @@ class Scanner:
                 self._note_symbol(u.name, "mex", "optional lifecycle pending", f"state={mex_state}")
             normal_vote = None
             if int(normal_result.get("side") or 0) in (1, -1):
-                normal_vote = Vote("NORMAL_TREND", int(normal_result["side"]), str(normal_result.get("reason") or "Normal trend setup"))
+                normal_name = "SIMPLE_TREND" if cfg.STRATEGY_MODE != "LEGACY" else "NORMAL_TREND"
+                normal_vote = Vote(normal_name, int(normal_result["side"]),
+                                   str(normal_result.get("reason") or "Normal trend setup"))
             # One signal per underlying/candle; simultaneous setups use this deterministic priority.
             if orb_vote is not None:
                 votes, selected_engine = [orb_vote], "MOMENTUM_ORB"
                 if normal_vote is not None:
                     self.normal_trend_diagnostics["priority_superseded"] += 1
+                    if normal_vote.name == "SIMPLE_TREND":
+                        self.normal_trend_diagnostics["selected"] = max(
+                            0, self.normal_trend_diagnostics["selected"] - 1)
             elif mex_vote is not None:
                 votes, selected_engine = [mex_vote], "MOMENTUM_EXPLOSION"
                 if normal_vote is not None:
                     self.normal_trend_diagnostics["priority_superseded"] += 1
+                    if normal_vote.name == "SIMPLE_TREND":
+                        self.normal_trend_diagnostics["selected"] = max(
+                            0, self.normal_trend_diagnostics["selected"] - 1)
             elif normal_vote is not None:
-                votes, selected_engine = [normal_vote], "NORMAL_TREND"
-                self.normal_trend_diagnostics["selected"] += 1
+                votes, selected_engine = [normal_vote], normal_vote.name
+                # SIMPLE selection is counted inside _simple_candidate;
+                # LEGACY Normal Trend is counted here.
+                if normal_vote.name == "NORMAL_TREND":
+                    self.normal_trend_diagnostics["selected"] += 1
             else:
                 votes, selected_engine = [], None
                 self._note_symbol(u.name, "stage1", "no independent engine trigger", str(normal_result.get("reason") or "no normal setup"))
@@ -856,7 +881,7 @@ class Scanner:
                 "gate_results": normal_result.get("gate_results", {}),
                 "gate_failures": normal_result.get("gate_failures", []),
                 "metrics": normal_result.get("metrics", {}),
-                "selection": "SELECTED" if selected_engine == "NORMAL_TREND" else
+                "selection": "SELECTED" if normal_vote and selected_engine == normal_vote.name else
                              "SUPERSEDED_BY_" + str(selected_engine) if normal_vote and selected_engine else
                              "NOT_TRIGGERED",
             }
@@ -884,6 +909,11 @@ class Scanner:
                     strategy_name = "MOMENTUM_EXPLOSION"
                     setup_time = mex_live.get("setup_bar") or latest_bar.ts.isoformat()
                     trigger_time = mex_live.get("confirmed_bar") or latest_bar.ts.isoformat()
+                    confirmation_time = trigger_time
+                elif selected_engine == "SIMPLE_TREND":
+                    strategy_name = "SIMPLE_TREND"
+                    setup_time = latest_bar.ts.isoformat()
+                    trigger_time = latest_bar.ts.isoformat()
                     confirmation_time = trigger_time
                 else:
                     strategy_name = "NORMAL_TREND"
@@ -1206,16 +1236,25 @@ class Scanner:
         except Exception:
             log.exception("could not read Telegram outbox")
             return
+        if rows:
+            log.info("telegram outbox delivery batch started | pending=%d", len(rows))
         for row in rows:
             try:
                 ok = self.tg.send_to_chat(row["message"], row["chat_id"])
                 if ok:
                     store.mark_telegram_delivered(row["id"])
                     status = store.telegram_delivery_status(row["dedupe_key"])
+                    log.info("telegram outbox item acknowledged | signal_id=%s | chat_id=%s | delivered=%d/%d",
+                             row.get("signal_id"), row.get("chat_id"),
+                             status.get("delivered", 0), status.get("total", 0))
                     if status.get("all_delivered"):
                         self._mark_alerted(row["dedupe_key"], db=store)
+                        log.info("telegram signal fully delivered | signal_id=%s", row.get("signal_id"))
                 else:
-                    store.mark_telegram_failed(row["id"], getattr(self.tg, "last_error", None) or "Telegram did not acknowledge")
+                    error = getattr(self.tg, "last_error", None) or "Telegram did not acknowledge"
+                    store.mark_telegram_failed(row["id"], error)
+                    log.error("telegram outbox item remains pending | signal_id=%s | chat_id=%s | error=%s",
+                              row.get("signal_id"), row.get("chat_id"), error)
             except Exception as exc:
                 log.exception("Telegram outbox delivery failed for %s", row.get("id"))
                 try:
@@ -1243,10 +1282,23 @@ class Scanner:
             self._note_symbol(sig.underlying, "telegram", "delivery not queued", "no Telegram chat IDs configured")
             log.error("signal %s passed all gates but Telegram chat IDs are not configured", sig.id)
             return False
-        for chat_id in chats:
-            self.db.enqueue_telegram(dedupe_key, sig.id, str(chat_id), message)
-        self._deliver_pending_outbox()
-        status = self.db.telegram_delivery_status(dedupe_key)
+        try:
+            for chat_id in chats:
+                self.db.enqueue_telegram(dedupe_key, sig.id, str(chat_id), message)
+        except Exception as exc:
+            self._note_symbol(sig.underlying, "telegram", "outbox enqueue failed",
+                              f"{type(exc).__name__}: {exc}"[:180])
+            log.exception("signal %s saved but Telegram outbox enqueue failed", sig.id)
+            return False
+        log.info("telegram alert queued | signal_id=%s | chats=%d", sig.id, len(chats))
+        try:
+            self._deliver_pending_outbox()
+            status = self.db.telegram_delivery_status(dedupe_key)
+        except Exception as exc:
+            self._note_symbol(sig.underlying, "telegram", "outbox status check failed",
+                              f"{type(exc).__name__}: {exc}"[:180])
+            log.exception("signal %s is queued but delivery status could not be confirmed", sig.id)
+            return False
         if status.get("all_delivered"):
             self._mark_alerted(dedupe_key)
             self._watch(sig.underlying, sig.side, datetime.fromisoformat(sig.ts) - timedelta(minutes=cfg.SCAN_MINUTES),
@@ -1255,6 +1307,8 @@ class Scanner:
             return True
         self._note_symbol(sig.underlying, "telegram", "delivery pending",
                           f"delivered={status.get('delivered', 0)}/{status.get('total', 0)}; pending={status.get('pending', 0)}")
+        log.warning("signal alert not fully delivered | signal_id=%s | delivered=%d/%d | pending=%d",
+                    sig.id, status.get("delivered", 0), status.get("total", 0), status.get("pending", 0))
         return False
 
     def _evaluate(self, c: dict, vix: List[Candle], now: datetime, pre=None) -> Optional[Signal]:
@@ -1558,7 +1612,9 @@ class Scanner:
         except Exception:
             log.exception("signal feature logging failed")
         self.tracker.add(sig, contract)
-        self._queue_signal_alert(sig, dedupe_key, format_signal(sig), now)
+        telegram_acknowledged = self._queue_signal_alert(sig, dedupe_key, format_signal(sig), now)
+        log.info("signal lifecycle | signal_id=%s | database_saved=true | telegram_acknowledged=%s",
+                 sig.id, bool(telegram_acknowledged))
         log.info("SIGNAL %s %s %s %s score=%.2f/10", sig.underlying, sig.side, sig.contract, strategy, conf)
         return sig
 
