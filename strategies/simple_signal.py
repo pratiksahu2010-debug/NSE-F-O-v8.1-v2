@@ -117,10 +117,6 @@ def evaluate_simple(
         gate_results[side] = history[-1]
         if not all(history[-1].values()):
             continue
-        directional_extension = extension_call if side == "CALL" else extension_put
-        if directional_extension > float(max_entry_extension_atr):
-            not_fresh[side] = -1
-            continue
         run = 0
         for k in range(1, n_bars + 1):                                     # consecutive true candles ending now
             if not all(components(side, -k).values()):
@@ -130,6 +126,10 @@ def evaluate_simple(
                 break
         if run > fresh_bars:
             not_fresh[side] = run
+            continue
+        directional_extension = extension_call if side == "CALL" else extension_put
+        if directional_extension > float(max_entry_extension_atr):
+            not_fresh[side] = -1
             continue
         flipped = [name for name, ok in components(side, -(run + 1)).items() if not ok] if run < n_bars else []
         trigger = [_FLIP_TEXT[side][name] for name in flipped] or ["all conditions aligned"]
