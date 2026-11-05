@@ -92,6 +92,6 @@ def validate_entry_candidate(candidate, latest_candle, current_price, atr_value,
         rr = reward / risk
         metrics.update({"structural_stop": stop, "target": objective, "remaining_risk": risk,
                         "remaining_reward": reward, "remaining_rr": round(rr, 4)})
-        if min_rr is not None and rr < float(min_rr):
+        if min_rr is not None and rr + 1e-9 < float(min_rr):
             return False, "INSUFFICIENT_REMAINING_REWARD_RISK", metrics
     return True, "ENTRY_VALID", metrics
