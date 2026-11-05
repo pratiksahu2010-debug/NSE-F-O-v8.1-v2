@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 import threading
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -8,7 +8,7 @@ from models import Candle, Underlying, Vote
 from utils.market_hours import IST
 
 
-def _stage1_scanner(symbol, candle, simple_candidate):
+def _stage1_scanner(symbol, simple_candidate):
     scanner = scanner_module.Scanner.__new__(scanner_module.Scanner)
     scanner.unds = [symbol]
     scanner.ban = set()
@@ -46,14 +46,14 @@ def _stage1_scanner(symbol, candle, simple_candidate):
 
 def test_simple_mode_runs_mex_and_orb_without_changing_simple_normal_route():
     now = datetime(2026, 11, 5, 10, 0, tzinfo=IST)
-    candle = Candle(now.replace(minute=55), 100, 102, 99, 101, 1000, 0)
+    candle = Candle(now - timedelta(minutes=5), 100, 102, 99, 101, 1000, 0)
     symbol = Underlying("ABC", "STOCK", "NSE_EQ|ABC")
     simple_candidate = {
         "ps": 1.0,
         "votes": [Vote("SIMPLE_TREND", 1.0, "existing SIMPLE rule")],
         "entry_candidate": {"strategy": "SIMPLE_TREND"},
     }
-    scanner = _stage1_scanner(symbol, candle, simple_candidate)
+    scanner = _stage1_scanner(symbol, simple_candidate)
 
     with patch.object(scanner_module.cfg, "STRATEGY_MODE", "SIMPLE"), \
          patch.object(scanner_module.events, "symbol_event", return_value=False), \
@@ -69,33 +69,26 @@ def test_simple_mode_runs_mex_and_orb_without_changing_simple_normal_route():
     assert candidates[0]["selected_engine"] == "SIMPLE_TREND"
 
 
-def test_simple_mode_does_not_route_normal_through_legacy_intrabar_detector():
+def test_simple_mode_live_dispatch_keeps_mex_and_orb_but_not_legacy_normal():
     scanner = scanner_module.Scanner.__new__(scanner_module.Scanner)
-    scanner.underlying_by_key = {"NSE_EQ|ABC": Underlying("ABC", "STOCK", "NSE_EQ|ABC")}
-    scanner.underlying_by_fut_key = {}
-    scanner._fut_volume_snapshot = {}
-    scanner._live_state_lock = threading.Lock()
-    scanner._live_pending = set()
-    scanner._live_eval_at = {}
-    scanner._closed = False
+    symbol = Underlying("ABC", "STOCK", "NSE_EQ|ABC")
+    scanner.mex = SimpleNamespace(universe={"ABC"})
+    scanner.momentum_orb = SimpleNamespace(universe={"ABC"})
     scanner.live_engine = Mock()
-    scanner.live_engine.update.return_value = object()
-    scanner.live_context = {
-        "ABC": {
-            "session": [], "allc": [], "fut": [],
-            "updated_at": datetime(2026, 11, 5, 9, 59, tzinfo=IST).isoformat(),
-        }
-    }
     scanner.live_engine.detect.return_value = None
-    scanner._detect_live_candidate = Mock()
-    tick = SimpleNamespace(ltp=101.0, volume=1000)
-    received_at = datetime(2026, 11, 5, 10, 0, tzinfo=IST).timestamp()
+    scanner._live_symbol_locks = {"ABC": threading.RLock()}
+    scanner._live_state_lock = threading.Lock()
+    scanner._live_inflight = set()
+    scanner._closed = False
+    partial = Candle(datetime(2026, 11, 5, 10, 0, tzinfo=IST), 100, 102, 99, 101, 1000, 0)
+    cached = {"session": [], "allc": [], "fut": []}
+    now = datetime(2026, 11, 5, 10, 0, tzinfo=IST)
 
-    with patch.object(scanner_module.cfg, "STRATEGY_MODE", "SIMPLE"), \
-         patch.object(scanner_module.cfg, "LIVE_INTRABAR_ENABLED", True):
-        scanner.ingest_live_tick("NSE_EQ|ABC", tick, received_at)
+    with patch.object(scanner_module.cfg, "STRATEGY_MODE", "SIMPLE"):
+        scanner._detect_live_candidate(symbol, partial, now, cached)
 
-    scanner.live_engine.detect.assert_not_called()
-    # The tick is accepted for asynchronous MEX/ORB evaluation; the worker
-    # itself decides which independent strategy universes are eligible.
-    assert scanner._live_pending == {"ABC"}
+    scanner.live_engine.detect.assert_called_once()
+    kwargs = scanner.live_engine.detect.call_args.kwargs
+    assert kwargs["allow_sequential"] is False
+    assert kwargs["allow_mex"] is True
+    assert kwargs["allow_orb"] is True
