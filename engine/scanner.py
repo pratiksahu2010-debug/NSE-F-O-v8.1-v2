@@ -859,8 +859,9 @@ class Scanner:
                 if normal_vote is not None:
                     self.normal_trend_diagnostics["priority_superseded"] += 1
             elif normal_vote is not None:
-                votes, selected_engine = [normal_vote], "NORMAL_TREND"
-                self.normal_trend_diagnostics["selected"] += 1
+                votes, selected_engine = [normal_vote], normal_vote.name
+                if normal_vote.name == "NORMAL_TREND":
+                    self.normal_trend_diagnostics["selected"] += 1
             else:
                 votes, selected_engine = [], None
                 self._note_symbol(u.name, "stage1", "no independent engine trigger", str(normal_result.get("reason") or "no normal setup"))
