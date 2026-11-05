@@ -307,6 +307,40 @@ def price_score(votes: List[Vote]) -> float:
     return _clamp(sum(v.score for v in votes))
 
 
+def _latest_confirmed_swing(candles: List[Candle], side: str, spot: float,
+                           lookback: int = 20, left_bars: int = 2, right_bars: int = 2) -> Optional[float]:
+    """Latest confirmed pivot behind price; confirmation requires completed bars on both sides.
+
+    A CALL uses a pivot low below spot; a PUT uses a pivot high above spot.
+    The last right_bars candles confirm the pivot, so the newest unconfirmed
+    wick is never treated as a swing. Returns None rather than guessing.
+    """
+    if not candles or spot <= 0 or left_bars < 1 or right_bars < 1:
+        return None
+    sgn = 1 if str(side).upper() == "CALL" else -1
+    start = max(left_bars, len(candles) - max(left_bars + right_bars + 1, int(lookback)))
+    latest = None
+    end = len(candles) - right_bars
+    for i in range(start, end):
+        bar = candles[i]
+        level = float(bar.l if sgn > 0 else bar.h)
+        if not math.isfinite(level) or level <= 0:
+            continue
+        before = candles[i-left_bars:i]
+        after = candles[i+1:i+right_bars+1]
+        if len(before) != left_bars or len(after) != right_bars:
+            continue
+        if sgn > 0:
+            pivot = all(level < float(x.l) for x in before + after)
+            valid_side = level < spot
+        else:
+            pivot = all(level > float(x.h) for x in before + after)
+            valid_side = level > spot
+        if pivot and valid_side:
+            latest = level
+    return latest
+
+
 def invalidation_distance(side: str, session: List[Candle], allc: List[Candle], spot: float,
                           kind: str = "TREND", trigger_bar: Optional[Candle] = None) -> float:
     """Return the raw underlying distance to a setup-specific invalidation level.
@@ -325,7 +359,10 @@ def invalidation_distance(side: str, session: List[Candle], allc: List[Candle], 
     recent = allc[-max(3, min(8, len(allc))):]
     kind = str(kind or "TREND").upper()
     if kind in ("REVERSAL",):
-        level = min(c.l for c in recent) if sgn > 0 else max(c.h for c in recent)
+        swing = _latest_confirmed_swing(allc, side, spot)
+        if swing is None:
+            return 0.0
+        level = swing
     elif kind in ("ORB", "MOMENTUM_ORB", "OPENING_RANGE_BREAKOUT") and len(session) >= cfg.ORB_BARS:
         opening = [c for c in session if (c.ts.hour, c.ts.minute) >= (9, 15)
                    and (c.ts.hour, c.ts.minute) < (9, 30)]
@@ -344,53 +381,17 @@ def invalidation_distance(side: str, session: List[Candle], allc: List[Candle], 
             return 0.0
         level = float(vw_values[-1])
     elif kind in ("SIMPLE_TREND", "NORMAL_TREND"):
-        # Include the recent completed 5m swing, but use the nearest valid
-        # invalidation reference among swing / EMA9 / session VWAP. This keeps
-        # the stop structural without letting a distant swing alone veto a setup.
-        swing = allc[-6:-1] if len(allc) >= 6 else allc[:-1]
-        if not swing:
-            swing = recent
-        swing_level = min(float(c.l) for c in swing) if sgn > 0 else max(float(c.h) for c in swing)
-        # For a live intrabar entry, include the actual partial trigger-bar
-        # extreme as well as the last completed candle's extreme.
-        trigger_level = float(
-            (trigger_bar.l if sgn > 0 else trigger_bar.h)
-            if trigger_bar is not None else
-            (allc[-1].l if sgn > 0 else allc[-1].h)
-        )
-        e9_values = ema([c.c for c in allc], cfg.EMA_FAST)
-        vw_values = vwap(session)
-        candidates = [float(x) for x in (
-            swing_level, trigger_level, e9_values[-1] if e9_values else 0.0,
-            vw_values[-1] if vw_values else 0.0,
-        ) if x > 0 and (x < spot if sgn > 0 else x > spot)]
-        level = (max(candidates) if sgn > 0 else min(candidates)) if candidates else swing_level
+        # Use the latest confirmed 5m pivot behind price. EMA/VWAP proximity
+        # must not silently replace the actual structural swing invalidation.
+        level = _latest_confirmed_swing(allc, side, spot)
+        if level is None:
+            return 0.0
     else:
-        # Select the nearest valid support/resistance behind the entry, not simply
-        # max(EMA21, VWAP), which can select a level on the wrong side of price.
-        # Normal trend continuation invalidates at EMA9 (the resumption line),
-        # not the much slower EMA21. EMA21 can sit >1.3 ATR away in a healthy trend
-        # and would turn otherwise valid entries into impractically wide stops.
-        e9_values = ema([c.c for c in allc], cfg.EMA_FAST)
-        vw_values = vwap(session)
-        # For a continuation entry, the signal candle's own swing is a valid
-        # nearby invalidation reference. This avoids rejecting an otherwise clean
-        # EMA9 resumption simply because the slower VWAP/EMA9 is temporarily far
-        # away. RiskRules still applies the minimum noise buffer and hard max ATR.
-        # Use the actual trigger candle extreme for a continuation setup.
-        # A 3-8 bar swing can be too distant after a strong trend push and causes
-        # good signals to fail the max-risk check. The ATR noise buffer below
-        # protects against a stop sitting exactly on the wick.
-        trigger = allc[-1]
-        swing_level = trigger.l if sgn > 0 else trigger.h
-        candidates = [float(x) for x in (e9_values[-1] if e9_values else 0.0,
-                                         vw_values[-1] if vw_values else 0.0,
-                                         swing_level)
-                      if x > 0 and (x < spot if sgn > 0 else x > spot)]
-        if candidates:
-            level = max(candidates) if sgn > 0 else min(candidates)
-        else:
-            level = min(c.l for c in recent) if sgn > 0 else max(c.h for c in recent)
+        # Trend/continuation setups also require a confirmed pivot. Setup-specific
+        # ORB/MEX/SQUEEZE/VWAP branches above retain their own structural boundary.
+        level = _latest_confirmed_swing(allc, side, spot)
+        if level is None:
+            return 0.0
     raw = sgn * (spot - float(level)) + cfg.STOP_BUFFER_ATR * a
     return float(raw) if raw > 0 else 0.0
 
