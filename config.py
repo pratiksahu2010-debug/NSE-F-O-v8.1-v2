@@ -93,6 +93,7 @@ class Config:
     # Keep disabled until historical replay and paper verification are complete.
     V2_ENGINE_ENABLED = _env("V2_ENGINE_ENABLED", False, _bool)
     V2_MIN_SCORE = _env("V2_MIN_SCORE", 65.0, float)
+    V2_MIN_ADX = 22.0  # hard minimum; not lowered by environment overrides
     V2_MIN_RR = _env("V2_MIN_RR", 1.5, float)
     V2_MIN_HISTORY_BARS = _env("V2_MIN_HISTORY_BARS", 220, int)
 
