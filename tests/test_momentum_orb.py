@@ -35,16 +35,16 @@ class MomentumORBTests(unittest.TestCase):
             patch.object(momentum_orb, "atr", return_value=[1.2]),
             patch.object(momentum_orb, "ema", return_value=[102.0]),
             patch.object(cfg, "MOMENTUM_ORB_ENABLED", True),
-            patch.object(cfg, "MEX_ORB_BODY_MIN", 0.55),
-            patch.object(cfg, "MEX_ORB_CLOSE_POS", 0.75),
+            patch.object(cfg, "MEX_ORB_BODY_MIN", 0.50),
+            patch.object(cfg, "MEX_ORB_CLOSE_POS", 0.65),
             patch.object(cfg, "MEX_ORB_MAX_EXTENSION_ATR", 1.5),
             patch.object(cfg, "MEX_ORB_CLEARANCE_ATR", 0.05),
         ):
             side, score, reason, metrics = momentum_orb.score_momentum_orb(candles, candles)
         self.assertEqual(side, 1, reason)
         self.assertGreater(score, 0)
-        self.assertGreaterEqual(metrics["body_fraction"], 0.55)
-        self.assertGreaterEqual(metrics["close_position"], 0.75)
+        self.assertGreaterEqual(metrics["body_fraction"], 0.50)
+        self.assertGreaterEqual(metrics["close_position"], 0.65)
         self.assertLessEqual(metrics["extension_atr"], 1.5)
 
     def test_non_mex_symbol_is_not_eligible(self):
