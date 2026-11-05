@@ -100,7 +100,7 @@ class Config:
     SIMPLE_RSI_PUT_MAX = _env("SIMPLE_RSI_PUT_MAX", 48.0, float)       # PUT: RSI at or below ...
     SIMPLE_RSI_PUT_MIN = _env("SIMPLE_RSI_PUT_MIN", 32.0, float)       # ... but not an oversold flush
     SIMPLE_FRESH_BARS = _env("SIMPLE_FRESH_BARS", 3, int)              # fire only while the setup is at most this many candles old
-    SIMPLE_MAX_EXTENSION_ATR = _env("SIMPLE_MAX_EXTENSION_ATR", 1.5, float)  # reject chasing >1.8 ATR from EMA9
+    SIMPLE_MAX_EXTENSION_ATR = _env("SIMPLE_MAX_EXTENSION_ATR", 1.5, float)  # reject chasing >1.5 ATR from EMA9
     SIMPLE_MIN_BARS = _env("SIMPLE_MIN_BARS", 35, int)                 # candles of history before the indicators are trusted (ADX needs 29 + the freshness window)
     SIMPLE_MIN_SESSION_BARS = _env("SIMPLE_MIN_SESSION_BARS", 3, int)  # closed candles today before VWAP is trusted (first scan 09:30)
     SIMPLE_MIN_RR_T1 = _env("SIMPLE_MIN_RR_T1", 1.5, float)  # Normal/SIMPLE first target must retain at least 1.5R after structure
