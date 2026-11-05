@@ -63,12 +63,12 @@ def score_momentum_orb(session, allc):
         clearance = side * (last.c - edge) / av
         accepted = clearance >= float(getattr(cfg, "MEX_ORB_CLEARANCE_ATR", 0.05))
         candle_direction = side * (last.c - last.o) > 0
-        close_threshold = float(getattr(cfg, "MEX_ORB_CLOSE_POS", 0.75))
+        close_threshold = float(getattr(cfg, "MEX_ORB_CLOSE_POS", 0.65))
         close_strength = cp >= close_threshold if side > 0 else cp <= (1.0 - close_threshold)
         extension = side * (last.c - e9) / av
         not_chasing = extension <= cfg.MEX_ORB_MAX_EXTENSION_ATR
         if (fresh and accepted and candle_direction and close_strength
-                and body >= float(getattr(cfg, "MEX_ORB_BODY_MIN", 0.55)) and not_chasing):
+                and body >= float(getattr(cfg, "MEX_ORB_BODY_MIN", 0.50)) and not_chasing):
             metrics = {"orb_high": hi, "orb_low": lo, "orb_width": width,
                        "atr": av, "breakout_clearance_atr": clearance,
                        "range_expansion": current_range / max(base_range, 1e-12),
