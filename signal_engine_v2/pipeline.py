@@ -8,6 +8,7 @@ from .config import EngineConfig
 from .models import (Candidate, CandleState, DecisionState, MarketSnapshot,
                      SignalDecision, directional_levels_valid)
 from .strategy import Strategy
+from .scorer import score_candidate
 
 
 class SignalPipeline:
@@ -69,7 +70,8 @@ class SignalPipeline:
     def resolve(self, candidates: Iterable[Candidate], snapshot: MarketSnapshot) -> list[SignalDecision]:
         valid: list[Candidate] = []
         rejected: list[SignalDecision] = []
-        for c in candidates:
+        for original in candidates:
+            c = score_candidate(original, snapshot)[0] if self.config.unified_scoring_enabled else original
             reasons = self._reject_reasons(c, snapshot)
             if reasons:
                 rejected.append(SignalDecision(c, DecisionState.REJECTED, c.identity, reasons))
