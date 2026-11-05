@@ -15,7 +15,13 @@ class FixedStrategy:
 
 def snapshot(closed=True):
     bar = Candle(datetime(2026, 11, 5, 9, 30, tzinfo=timezone.utc), 100, 105, 99, 104, 1000, closed)
-    return MarketSnapshot("NIFTY", "INDEX", "5m", bar)
+    return MarketSnapshot("NIFTY", "INDEX", "5m", bar,
+                          indicators={"ema_9": 103.0, "ema_21": 102.0, "ema_50": 101.0,
+                                      "session_vwap": 100.0, "vwap_slope_3": 0.2,
+                                      "adx_14": 30.0, "plus_di": 30.0, "minus_di": 10.0,
+                                      "rsi_14": 60.0, "macd_hist": 0.5, "rvol_20": 2.0,
+                                      "atr_14": 2.0},
+                          metadata={"htf_bias": 1})
 
 
 def candidate(strategy="MOMENTUM", side=Side.CALL, score=80, state=CandleState.CLOSED):
@@ -37,7 +43,8 @@ def test_intrabar_candidate_is_explicitly_early():
 
 
 def test_low_score_is_rejected():
-    pipe = SignalPipeline([FixedStrategy("momentum", [candidate(score=64)])])
+    pipe = SignalPipeline([FixedStrategy("momentum", [candidate(score=64)])],
+                          EngineConfig(unified_scoring_enabled=False))
     decisions = pipe.evaluate(snapshot())
     assert any("score_below_minimum" in x.rejected_reasons for x in decisions)
 
@@ -46,7 +53,7 @@ def test_opposite_direction_conflict_without_margin_rejects_both():
     a = candidate("MOMENTUM", Side.CALL, 80)
     b = candidate("BREAKOUT", Side.PUT, 75)
     pipe = SignalPipeline([FixedStrategy("a", [a]), FixedStrategy("b", [b])],
-                          EngineConfig(conflict_score_margin=8))
+                          EngineConfig(conflict_score_margin=8, unified_scoring_enabled=False))
     decisions = pipe.evaluate(snapshot())
     assert not any(x.state is not DecisionState.REJECTED for x in decisions)
     assert any("directional_conflict_no_clear_winner" in x.rejected_reasons for x in decisions)

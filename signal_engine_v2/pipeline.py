@@ -8,6 +8,7 @@ from .config import EngineConfig
 from .models import (Candidate, CandleState, DecisionState, MarketSnapshot,
                      SignalDecision, directional_levels_valid)
 from .strategy import Strategy
+from .scorer import score_candidate
 
 
 class SignalPipeline:
@@ -69,7 +70,8 @@ class SignalPipeline:
     def resolve(self, candidates: Iterable[Candidate], snapshot: MarketSnapshot) -> list[SignalDecision]:
         valid: list[Candidate] = []
         rejected: list[SignalDecision] = []
-        for c in candidates:
+        for original in candidates:
+            c = score_candidate(original, snapshot)[0] if self.config.unified_scoring_enabled else original
             reasons = self._reject_reasons(c, snapshot)
             if reasons:
                 rejected.append(SignalDecision(c, DecisionState.REJECTED, c.identity, reasons))
@@ -88,8 +90,11 @@ class SignalPipeline:
             group.sort(key=self._rank, reverse=True)
             winner = group[0]
             if len(group) > 1:
-                runner_up = group[1]
-                if winner.side != runner_up.side and winner.score - runner_up.score < self.config.conflict_score_margin:
+                # Compare opposing candidates of the same confirmation class.
+                # An early intrabar preview must never veto a closed-bar signal.
+                opposing = next((x for x in group[1:]
+                                 if x.candle_state is winner.candle_state and x.side != winner.side), None)
+                if opposing is not None and winner.score - opposing.score < self.config.conflict_score_margin:
                     rejected.extend(SignalDecision(x, DecisionState.REJECTED, x.identity,
                                       ("directional_conflict_no_clear_winner",)) for x in group)
                     continue
