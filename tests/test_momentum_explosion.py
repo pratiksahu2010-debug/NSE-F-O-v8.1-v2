@@ -37,7 +37,8 @@ class TestMomentumExplosion(unittest.TestCase):
             price = c
         allc.append(Candle(start + timedelta(minutes=5 * len(allc)), price,
                            price + 3.3, price - 0.3, price + 3.0, 3000))
-        points, reason, details = score_momentum_explosion(1, allc[-20:], allc)
+        with patch.object(cfg, "MEX_MAX_EXTENSION_ATR", 2.0):
+            points, reason, details = score_momentum_explosion(1, allc[-20:], allc)
         self.assertGreater(points, 0.0, reason)
         self.assertIn("MOMENTUM_EXPLOSION UP/CALL", reason)
         self.assertGreater(details["rsi"], 78.0)  # normal entry band must not disable explosion logic
@@ -66,7 +67,8 @@ class TestMomentumExplosion(unittest.TestCase):
             price = close
         allc.append(Candle(start + timedelta(minutes=5 * len(allc)), price,
                            price + 3.3, price - 0.3, price + 3.0, 0))
-        points, reason, details = score_momentum_explosion(1, allc[-20:], allc)
+        with patch.object(cfg, "MEX_MAX_EXTENSION_ATR", 2.0):
+            points, reason, details = score_momentum_explosion(1, allc[-20:], allc)
         self.assertGreater(points, 0.0, reason)
         self.assertIsNone(details.get("relative_volume"))
 
@@ -83,7 +85,8 @@ class TestMomentumExplosion(unittest.TestCase):
         allc.append(Candle(start + timedelta(minutes=5 * len(allc)), price,
                            price + 3.3, price - 0.3, price + 3.0, 3000))
         # Deliberately bearish/weak MACD while price impulse and expansion are bullish.
-        with patch("strategies.momentum_explosion.macd", return_value=([], [], [-1.0, -2.0])):
+        with patch.object(cfg, "MEX_MAX_EXTENSION_ATR", 2.0), \
+             patch("strategies.momentum_explosion.macd", return_value=([], [], [-1.0, -2.0])):
             points, reason, details = score_momentum_explosion(1, allc[-20:], allc)
         self.assertGreater(points, 0.0, reason)
         self.assertFalse(details["macd_supporting"])
