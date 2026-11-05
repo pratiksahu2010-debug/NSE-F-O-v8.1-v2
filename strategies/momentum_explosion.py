@@ -1,10 +1,9 @@
 """Independent Momentum Expansion Index (MEI) detector for the MEX engine.
 
 The detector seeks early compression release or strong range expansion with an
-ATR-normalised directional impulse, a fresh price-boundary break, strong close,
-MACD histogram confirmation and an EMA9 extension guard. Relative volume and
-RSI are diagnostic only; VWAP/ADX alignment and second-candle lifecycle
-confirmation are not required.
+ATR-normalised directional impulse, a fresh price-boundary break, strong close and an EMA9 extension guard. MACD histogram, relative volume and
+RSI are supporting diagnostics only; VWAP/ADX alignment and second-candle
+lifecycle confirmation are not required.
 """
 from statistics import median
 from typing import List, Tuple
@@ -20,8 +19,8 @@ def momentum_expansion_index(sgn: int, session: List[Candle], allc: List[Candle]
     """Early compression-release detector; +1 is CALL, -1 is PUT.
 
     The detector looks for a volatility contraction followed by a directional
-    range break and a fresh MACD turn. Volume is diagnostic when available,
-    never a hard gate. It deliberately does not wait for a second candle.
+    range break with a strong directional impulse. MACD and volume are diagnostic,
+    never hard gates. It deliberately does not wait for a second candle.
     """
     if sgn not in (1, -1) or len(allc) < 35 or len(session) < 3:
         return 0.0, "MEX warmup", {}
@@ -51,29 +50,29 @@ def momentum_expansion_index(sgn: int, session: List[Candle], allc: List[Candle]
     boundary = max(x.h for x in base) if sgn > 0 else min(x.l for x in base)
     breakout = sgn * (current.c - boundary) > 0
     close_position = close_pos(current)
-    strong_close = close_position >= 0.65 if sgn > 0 else close_position <= 0.35
+    close_threshold = float(getattr(cfg, "MEX_CLOSE_POS", 0.75))
+    strong_close = close_position >= close_threshold if sgn > 0 else close_position <= (1.0 - close_threshold)
     extension = sgn * (current.c - e9) / av
     not_extended = extension <= float(cfg.MEX_MAX_EXTENSION_ATR)
     volume_values = [x.v for x in allc[-21:-1] if x.v > 0]
     rvol = current.v / (sum(volume_values) / len(volume_values)) if current.v > 0 and volume_values else None
     compressed = compression_ratio <= float(cfg.MEX_COMPRESSION_MAX)
     expansion = range_ratio >= float(cfg.MEX_MIN_RANGE_RATIO)
-    # Either a clean compression release or an unusually strong range expansion
-    # can qualify; the MACD turn and price boundary break establish direction.
+    # Compression is recorded as context, but the current trigger candle must
+    # independently meet the configured range-expansion threshold.
     gates = {
         "fresh_boundary_break": breakout,
         "strong_close": strong_close,
         "not_overextended": not_extended,
         "minimum_directional_impulse": impulse >= float(cfg.MEX_MIN_IMPULSE_ATR),
-        "macd_turn_or_directional_alignment": macd_support,
-        "compression_or_range_expansion": compressed or expansion,
+        "minimum_range_expansion": expansion,
     }
     failed = [name for name, passed in gates.items() if not passed]
     diagnostics = {
         "compression_ratio": compression_ratio, "range_ratio": range_ratio,
         "impulse_atr": impulse, "macd_histogram": hist[-1],
         "macd_turn": macd_turn, "macd_direction_aligned": macd_direction,
-        "extension_atr": extension, "relative_volume": rvol,
+        "macd_supporting": macd_support, "extension_atr": extension, "relative_volume": rvol,
         "gate_results": gates, "gate_failures": failed,
         "breakout_level": boundary, "close_position": close_position,
     }
@@ -89,9 +88,9 @@ def momentum_expansion_index(sgn: int, session: List[Candle], allc: List[Candle]
                "rsi": float(rsi_value), "ema9": e9, "extension_atr": extension,
                "close_position": close_position, "breakout_level": boundary,
                "macd_turn": macd_turn, "macd_direction_aligned": macd_direction,
-               "gate_results": gates, "gate_failures": [], "atr": av}
+               "macd_supporting": macd_support, "gate_results": gates, "gate_failures": [], "atr": av}
     direction = "UP/CALL" if sgn > 0 else "DOWN/PUT"
-    return score, f"MOMENTUM_EXPLOSION {direction}: early range release, MACD turn and fresh boundary break", details
+    return score, f"MOMENTUM_EXPLOSION {direction}: ATR impulse, range expansion and fresh boundary break", details
 
 
 def score_momentum_explosion(sgn: int, session: List[Candle], allc: List[Candle]):

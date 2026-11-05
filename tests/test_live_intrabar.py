@@ -226,3 +226,98 @@ def test_live_detector_reads_partial_candle_volume_from_v_field():
         )
 
     assert result is None
+
+
+def _live_detector_fixture():
+    from datetime import datetime, timedelta
+    from models import Candle
+    now = datetime(2026, 11, 3, 10, 1, tzinfo=IST)
+    session_start = datetime(2026, 11, 3, 9, 15, tzinfo=IST)
+    prior_start = datetime(2026, 11, 2, 12, 0, tzinfo=IST)
+    prior = [
+        Candle(prior_start + timedelta(minutes=5 * i), 100.0, 100.25, 99.75, 100.0, 1000.0)
+        for i in range(41)
+    ]
+    session = []
+    for i in range(9):
+        ts = session_start + timedelta(minutes=5 * i)
+        if i < 3:
+            session.append(Candle(ts, 100.0, 102.0, 98.0, 101.0, 1000.0))
+        else:
+            session.append(Candle(ts, 101.0, 101.25, 100.75, 101.0, 1000.0))
+    return now, session, prior + session
+
+
+def test_live_orb_triggers_on_partial_breakout_with_50_percent_body_and_65_percent_close():
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    from engine import live_intrabar as live_module
+    from models import Candle
+
+    now, session, completed = _live_detector_fixture()
+    partial = Candle(now.replace(minute=0, second=0, microsecond=0),
+                     102.0, 102.8, 101.9, 102.7, 50.0)
+    cfg = SimpleNamespace(
+        V7_MIN_BARS=50, MOMENTUM_ORB_ENABLED=True, MEX_ENABLED=False,
+        MEX_ORB_LAST_TIME=(14, 45), ORB_BARS=3,
+        ORB_MIN_RANGE_ATR=0.6, ORB_MAX_RANGE_ATR=3.5,
+        MEX_ORB_BODY_MIN=0.50, MEX_ORB_CLOSE_POS=0.65,
+        MEX_ORB_CLEARANCE_ATR=0.05, MEX_ORB_MAX_EXTENSION_ATR=1.5,
+        LIVE_MAX_RUNAWAY_ATR=0.8,
+    )
+    und = Underlying(name="ABC", kind="STOCK", spot_key="NSE_EQ|ABC")
+    with (
+        patch.object(live_module, "ema", side_effect=lambda values, period: [102.0] * len(values) if period == 9 else [100.0] * len(values)),
+        patch.object(live_module, "atr", return_value=[1.2] * len(completed)),
+        patch.object(live_module, "vwap", return_value=[100.0] * len(session)),
+        patch.object(live_module, "adx", return_value=[(25.0, 20.0, 10.0)] * len(completed)),
+        patch.object(live_module, "rsi", return_value=[55.0] * len(completed)),
+    ):
+        result = LiveIntrabarEngine().detect(
+            und, session, completed, partial, now, cfg,
+            allow_sequential=False, allow_mex=False, allow_orb=True,
+        )
+    assert result is not None
+    assert result["strategy"] == "MOMENTUM_ORB"
+    assert result["side"] == "CALL"
+    assert result["metrics"]["body_fraction"] >= 0.50
+    assert result["metrics"]["close_position"] >= 0.65
+
+
+def test_live_mex_uses_configured_impulse_and_range_expansion_without_macd_veto():
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    from engine import live_intrabar as live_module
+    from models import Candle
+
+    now, session, completed = _live_detector_fixture()
+    # Last eight completed candles are a tight base; the live partial candle
+    # expands 2x, breaks its high and produces a 0.8 ATR directional impulse.
+    partial = Candle(now.replace(minute=0, second=0, microsecond=0),
+                     101.7, 102.6, 101.6, 102.5, 20.0)
+    cfg = SimpleNamespace(
+        V7_MIN_BARS=50, MOMENTUM_ORB_ENABLED=False, MEX_ENABLED=True,
+        MEX_LOOKBACK=8, MEX_COMPRESSION_MAX=0.90,
+        MEX_MIN_RANGE_RATIO=1.5, MEX_MIN_IMPULSE_ATR=0.45,
+        MEX_CLOSE_POS=0.75, MEX_MAX_EXTENSION_ATR=1.8,
+        LIVE_MAX_RUNAWAY_ATR=0.8,
+    )
+    und = Underlying(name="ABC", kind="STOCK", spot_key="NSE_EQ|ABC")
+    with (
+        patch.object(live_module, "ema", side_effect=lambda values, period: [101.5] * len(values) if period == 9 else [100.0] * len(values)),
+        patch.object(live_module, "atr", return_value=[1.0] * len(completed)),
+        patch.object(live_module, "vwap", return_value=[100.0] * len(session)),
+        patch.object(live_module, "adx", return_value=[(25.0, 20.0, 10.0)] * len(completed)),
+        patch.object(live_module, "rsi", return_value=[55.0] * len(completed)),
+        patch.object(live_module, "macd", return_value=([], [], [-1.0, -2.0])),
+    ):
+        result = LiveIntrabarEngine().detect(
+            und, session, completed, partial, now, cfg,
+            allow_sequential=False, allow_mex=True, allow_orb=False,
+        )
+    assert result is not None
+    assert result["strategy"] == "MOMENTUM_EXPLOSION"
+    assert result["side"] == "CALL"
+    assert result["metrics"]["range_expansion"] >= 1.5
+    assert result["metrics"]["impulse_atr"] >= 0.45
+    assert result["metrics"]["macd_supporting"] is False

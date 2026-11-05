@@ -172,57 +172,100 @@ class LiveIntrabarEngine:
         reason = ""
         edge = 0.0
 
-        # ORB: opening-range acceptance, with a clean candle and limited extension.
-        orb_time_ok = (now.hour, now.minute) <= tuple(getattr(cfg, "MEX_ORB_LAST_TIME", (11, 15)))
-        if allow_orb and orb_time_ok and getattr(cfg, "MOMENTUM_ORB_ENABLED", True) and orb_hi > orb_lo > 0:
+        trigger_metrics = {}
+
+        # ORB: opening-range breakout is evaluated on the live partial candle.
+        # A failed earlier break may re-arm only after a completed close returns
+        # inside the range; a prior breakout does not permanently consume ORB.
+        orb_time_ok = (now.hour, now.minute) <= tuple(getattr(cfg, "MEX_ORB_LAST_TIME", (14, 45)))
+        orb_bars = max(1, int(getattr(cfg, "ORB_BARS", 3)))
+        orb_ready = (
+            len(opening) == orb_bars
+            and (opening[0].ts.hour, opening[0].ts.minute) == (9, 15)
+            and all((right.ts - left.ts).total_seconds() == 300
+                    for left, right in zip(opening, opening[1:]))
+        )
+        if allow_orb and orb_time_ok and getattr(cfg, "MOMENTUM_ORB_ENABLED", True) and orb_ready:
             orb_width = orb_hi - orb_lo
             range_ok = float(getattr(cfg, "ORB_MIN_RANGE_ATR", 0.6)) * a <= orb_width <= float(getattr(cfg, "ORB_MAX_RANGE_ATR", 3.5)) * a
-            prior_call_break = any(x.c > orb_hi for x in completed_session[3:])
-            prior_put_break = any(x.c < orb_lo for x in completed_session[3:])
-            call_ok = (not prior_call_break and partial.c > orb_hi and partial.c > partial.o
-                       and body >= 0.45 and close_pos >= 0.65
-                       and (partial.c - e9[-1]) / a <= float(getattr(cfg, "MEX_ORB_MAX_EXTENSION_ATR", 2.0)))
-            put_ok = (not prior_put_break and partial.c < orb_lo and partial.c < partial.o
-                      and body >= 0.45 and close_pos <= 0.35
-                      and (e9[-1] - partial.c) / a <= float(getattr(cfg, "MEX_ORB_MAX_EXTENSION_ATR", 2.0)))
+            after_open = [x for x in completed_session if x.ts > opening[-1].ts]
+            previous_close = float(after_open[-1].c) if after_open else float(opening[-1].c)
+            body_min = float(getattr(cfg, "MEX_ORB_BODY_MIN", 0.50))
+            close_threshold = float(getattr(cfg, "MEX_ORB_CLOSE_POS", 0.65))
+            clearance_min = float(getattr(cfg, "MEX_ORB_CLEARANCE_ATR", 0.05))
+            extension_max = float(getattr(cfg, "MEX_ORB_MAX_EXTENSION_ATR", 1.5))
+            call_clearance = (partial.c - orb_hi) / a
+            put_clearance = (orb_lo - partial.c) / a
+            call_extension = (partial.c - e9[-1]) / a
+            put_extension = (e9[-1] - partial.c) / a
+            call_fresh = previous_close <= orb_hi
+            put_fresh = previous_close >= orb_lo
+            call_ok = (call_fresh and call_clearance >= clearance_min
+                       and partial.c > partial.o and body >= body_min
+                       and close_pos >= close_threshold and call_extension <= extension_max)
+            put_ok = (put_fresh and put_clearance >= clearance_min
+                      and partial.c < partial.o and body >= body_min
+                      and close_pos <= (1.0 - close_threshold) and put_extension <= extension_max)
             if range_ok and call_ok:
                 side, strategy, edge = "CALL", "MOMENTUM_ORB", orb_hi
-                reason = "live ORB LONG breakout acceptance; retest preferred, not mandatory"
+                reason = "live ORB LONG: opening-range break with strong body/close and controlled extension"
+                trigger_metrics = {"orb_high": orb_hi, "orb_low": orb_lo, "orb_width": orb_width,
+                                   "breakout_clearance_atr": call_clearance, "extension_atr": call_extension,
+                                   "body_fraction": body, "close_position": close_pos}
             elif range_ok and put_ok:
                 side, strategy, edge = "PUT", "MOMENTUM_ORB", orb_lo
-                reason = "live ORB SHORT breakdown acceptance; retest preferred, not mandatory"
+                reason = "live ORB SHORT: opening-range breakdown with strong body/close and controlled extension"
+                trigger_metrics = {"orb_high": orb_hi, "orb_low": orb_lo, "orb_width": orb_width,
+                                   "breakout_clearance_atr": put_clearance, "extension_atr": put_extension,
+                                   "body_fraction": body, "close_position": close_pos}
 
-        # MEX: early compression release / range expansion. No next-candle,
-        # DI, VWAP, RSI or mandatory volume confirmation is used here.
+        # MEX: live range expansion + directional impulse + fresh boundary break.
+        # MACD, RSI, VWAP, ADX and volume are diagnostics/supporting context only;
+        # none can veto an otherwise valid independent momentum expansion.
         if side is None and allow_mex and getattr(cfg, "MEX_ENABLED", True) and len(completed_all) >= 35:
             lookback = max(5, int(getattr(cfg, "MEX_LOOKBACK", 8)))
             base = completed_all[-lookback:]
             base_ranges = [max(0.0, x.h - x.l) for x in base]
             base_range = median(base_ranges) if base_ranges else 0.0
             broad_ranges = [max(0.0, x.h - x.l) for x in completed_all[-30:]]
-            compression = median(base_ranges) / max(median(broad_ranges), 1e-9) if base_ranges and broad_ranges else 1.0
-            compressed = compression <= float(getattr(cfg, "MEX_COMPRESSION_MAX", 0.82))
+            broad_median = median(broad_ranges) if broad_ranges else base_range
+            compression = median(base_ranges) / max(broad_median, 1e-9) if base_ranges else 1.0
+            compressed = compression <= float(getattr(cfg, "MEX_COMPRESSION_MAX", 0.90))
             range_exp = rng / max(base_range, 1e-9)
+            min_range_ratio = float(getattr(cfg, "MEX_MIN_RANGE_RATIO", 1.5))
+            min_impulse = float(getattr(cfg, "MEX_MIN_IMPULSE_ATR", 0.45))
+            close_threshold = float(getattr(cfg, "MEX_CLOSE_POS", 0.75))
+            extension_max = float(getattr(cfg, "MEX_MAX_EXTENSION_ATR", 1.8))
             _, _, hist = macd(closes, 12, 26, 9)
+            macd_call_support = hist[-1] > 0 and hist[-1] >= hist[-2]
+            macd_put_support = hist[-1] < 0 and hist[-1] <= hist[-2]
             impulse_call = (partial.c - partial.o) / a
             impulse_put = (partial.o - partial.c) / a
             call_extension = (partial.c - e9[-1]) / a
             put_extension = (e9[-1] - partial.c) / a
-            call_break = partial.c > max(x.h for x in base)
-            put_break = partial.c < min(x.l for x in base)
-            call_momentum = hist[-1] > 0 and hist[-1] >= hist[-2]
-            put_momentum = hist[-1] < 0 and hist[-1] <= hist[-2]
-            release = compressed or range_exp >= float(getattr(cfg, "MEX_MIN_RANGE_RATIO", 1.5))
-            if (release and range_exp >= 1.5 and impulse_call >= 0.50 and call_break
-                    and close_pos >= 0.65 and call_momentum
-                    and call_extension <= float(getattr(cfg, "MEX_MAX_EXTENSION_ATR", 2.0))):
-                side, strategy, edge = "CALL", "MOMENTUM_EXPLOSION", max(x.h for x in base)
-                reason = "live MEX LONG: compression release, range expansion and MACD momentum turn"
-            elif (release and range_exp >= 1.5 and impulse_put >= 0.50 and put_break
-                    and close_pos <= 0.35 and put_momentum
-                    and put_extension <= float(getattr(cfg, "MEX_MAX_EXTENSION_ATR", 2.0))):
-                side, strategy, edge = "PUT", "MOMENTUM_EXPLOSION", min(x.l for x in base)
-                reason = "live MEX SHORT: compression release, range expansion and MACD momentum turn"
+            call_boundary = max(x.h for x in base)
+            put_boundary = min(x.l for x in base)
+            call_break = partial.c > call_boundary
+            put_break = partial.c < put_boundary
+            expansion_ok = range_exp >= min_range_ratio
+            if (expansion_ok and impulse_call >= min_impulse and call_break
+                    and close_pos >= close_threshold and call_extension <= extension_max):
+                side, strategy, edge = "CALL", "MOMENTUM_EXPLOSION", call_boundary
+                reason = "live MEX LONG: range expansion, ATR impulse and fresh boundary break"
+                trigger_metrics = {"range_expansion": range_exp, "compression_ratio": compression,
+                                   "compressed_before_release": compressed, "impulse_atr": impulse_call,
+                                   "extension_atr": call_extension, "breakout_level": call_boundary,
+                                   "close_position": close_pos, "macd_supporting": macd_call_support,
+                                   "relative_volume": round(float(live_rvol), 3)}
+            elif (expansion_ok and impulse_put >= min_impulse and put_break
+                    and close_pos <= (1.0 - close_threshold) and put_extension <= extension_max):
+                side, strategy, edge = "PUT", "MOMENTUM_EXPLOSION", put_boundary
+                reason = "live MEX SHORT: range expansion, ATR impulse and fresh boundary break"
+                trigger_metrics = {"range_expansion": range_exp, "compression_ratio": compression,
+                                   "compressed_before_release": compressed, "impulse_atr": impulse_put,
+                                   "extension_atr": put_extension, "breakout_level": put_boundary,
+                                   "close_position": close_pos, "macd_supporting": macd_put_support,
+                                   "relative_volume": round(float(live_rvol), 3)}
 
         # Normal Trend shares the same setup paths and indicator gates with the
         # closed-candle detector; only the trigger candle is partial.
@@ -316,10 +359,9 @@ class LiveIntrabarEngine:
                         if strategy == "SIMPLE_TREND" and simple_result else
                         {**(normal_result.get("metrics") or {}), "normal_setup_type": normal_result.get("setup_type")}
                         if strategy == "NORMAL_TREND" and normal_result else
-                        {"adx": float(adx_value), "plus_di": float(plus_di),
+                        {**trigger_metrics, "adx": float(adx_value), "plus_di": float(plus_di),
                          "minus_di": float(minus_di), "rsi": rsi_value,
                          "relative_volume": round(float(live_rvol), 3),
-                         "range_expansion": round(float(rng / max(sum(x.h - x.l for x in completed_all[-8:]) / 8, 1e-9)), 3),
                          "ema9": float(e9[-1]), "ema21": float(e21[-1]),
                          "vwap": float(vw), "atr": float(a)}),
         }
