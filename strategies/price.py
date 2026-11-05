@@ -350,10 +350,11 @@ def invalidation_distance(side: str, session: List[Candle], allc: List[Candle], 
         if not swing:
             swing = recent
         swing_level = min(float(c.l) for c in swing) if sgn > 0 else max(float(c.h) for c in swing)
+        trigger_level = float(allc[-1].l if sgn > 0 else allc[-1].h)
         e9_values = ema([c.c for c in allc], cfg.EMA_FAST)
         vw_values = vwap(session)
         candidates = [float(x) for x in (
-            swing_level, e9_values[-1] if e9_values else 0.0,
+            swing_level, trigger_level, e9_values[-1] if e9_values else 0.0,
             vw_values[-1] if vw_values else 0.0,
         ) if x > 0 and (x < spot if sgn > 0 else x > spot)]
         level = (max(candidates) if sgn > 0 else min(candidates)) if candidates else swing_level
