@@ -1227,16 +1227,25 @@ class Scanner:
         except Exception:
             log.exception("could not read Telegram outbox")
             return
+        if rows:
+            log.info("telegram outbox delivery batch started | pending=%d", len(rows))
         for row in rows:
             try:
                 ok = self.tg.send_to_chat(row["message"], row["chat_id"])
                 if ok:
                     store.mark_telegram_delivered(row["id"])
                     status = store.telegram_delivery_status(row["dedupe_key"])
+                    log.info("telegram outbox item acknowledged | signal_id=%s | chat_id=%s | delivered=%d/%d",
+                             row.get("signal_id"), row.get("chat_id"),
+                             status.get("delivered", 0), status.get("total", 0))
                     if status.get("all_delivered"):
                         self._mark_alerted(row["dedupe_key"], db=store)
+                        log.info("telegram signal fully delivered | signal_id=%s", row.get("signal_id"))
                 else:
-                    store.mark_telegram_failed(row["id"], getattr(self.tg, "last_error", None) or "Telegram did not acknowledge")
+                    error = getattr(self.tg, "last_error", None) or "Telegram did not acknowledge"
+                    store.mark_telegram_failed(row["id"], error)
+                    log.error("telegram outbox item remains pending | signal_id=%s | chat_id=%s | error=%s",
+                              row.get("signal_id"), row.get("chat_id"), error)
             except Exception as exc:
                 log.exception("Telegram outbox delivery failed for %s", row.get("id"))
                 try:
@@ -1264,8 +1273,15 @@ class Scanner:
             self._note_symbol(sig.underlying, "telegram", "delivery not queued", "no Telegram chat IDs configured")
             log.error("signal %s passed all gates but Telegram chat IDs are not configured", sig.id)
             return False
-        for chat_id in chats:
-            self.db.enqueue_telegram(dedupe_key, sig.id, str(chat_id), message)
+        try:
+            for chat_id in chats:
+                self.db.enqueue_telegram(dedupe_key, sig.id, str(chat_id), message)
+        except Exception as exc:
+            self._note_symbol(sig.underlying, "telegram", "outbox enqueue failed",
+                              f"{type(exc).__name__}: {exc}"[:180])
+            log.exception("signal %s saved but Telegram outbox enqueue failed", sig.id)
+            return False
+        log.info("telegram alert queued | signal_id=%s | chats=%d", sig.id, len(chats))
         self._deliver_pending_outbox()
         status = self.db.telegram_delivery_status(dedupe_key)
         if status.get("all_delivered"):
@@ -1276,6 +1292,8 @@ class Scanner:
             return True
         self._note_symbol(sig.underlying, "telegram", "delivery pending",
                           f"delivered={status.get('delivered', 0)}/{status.get('total', 0)}; pending={status.get('pending', 0)}")
+        log.warning("signal alert not fully delivered | signal_id=%s | delivered=%d/%d | pending=%d",
+                    sig.id, status.get("delivered", 0), status.get("total", 0), status.get("pending", 0))
         return False
 
     def _evaluate(self, c: dict, vix: List[Candle], now: datetime, pre=None) -> Optional[Signal]:
