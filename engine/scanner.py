@@ -1745,7 +1745,7 @@ class Scanner:
         strategy = (c["v2_candidate"].strategy if is_v2 else
                     "SIMPLE_TREND" if is_simple else "NORMAL_TREND" if is_normal_trend
                     else strategy_of(c["votes"][0].name) if c["votes"] else "TREND")
-        tier = "CONFIRMED"
+        tier = ("EARLY" if str((entry_candidate or {}).get("mode", "")).upper() == "INTRABAR" else "CONFIRMED") if is_v2 else "CONFIRMED"
         reasons = list(score_reasons) + scorer.reasons(c["votes"], side)
         trend_note = "15m trend aligned" if htf == (1 if side == "CALL" else -1) else "15m trend mixed"
         vwap_note = "15m VWAP aligned" if htf_vwap == (1 if side == "CALL" else -1) else ("15m VWAP opposed (score-only)" if htf_vwap in (-1, 1) else "15m VWAP neutral")
@@ -1782,11 +1782,14 @@ class Scanner:
         # Normal/SIMPLE uses the same nearby structural invalidation reference as
         # the legacy trend path (EMA9, session VWAP, or trigger-candle extreme).
         # RiskRules still rejects stops outside its permitted ATR envelope.
-        required_rr = max(float(cfg.MIN_RR_T1), float(getattr(cfg, "SIMPLE_MIN_RR_T1", 1.5))) if is_simple else float(cfg.MIN_RR_T1)
-        stop_dist = invalidation_distance(side, c["session"], c["allc"], spot, strategy,
-                                           trigger_bar=entry_bar if is_simple else None)
+        required_rr = (float(cfg.V2_MIN_RR) if is_v2 else
+                        max(float(cfg.MIN_RR_T1), float(getattr(cfg, "SIMPLE_MIN_RR_T1", 1.5)))
+                        if is_simple else float(cfg.MIN_RR_T1))
+        stop_dist = (abs(spot - float(c["v2_candidate"].stop)) if is_v2 else
+                     invalidation_distance(side, c["session"], c["allc"], spot, strategy,
+                                           trigger_bar=entry_bar if is_simple else None))
         lv = self.risk.levels(px, q.delta, a5, contract.tick_size, side, spot, stop_dist,
-                              min_target_rr=required_rr if is_simple else None)
+                              min_target_rr=required_rr if (is_simple or is_v2) else None)
         if not lv or float(lv.get("rr", 0.0)) < float(cfg.MIN_RR_T1):
             self._watch(u.name, side, entry_bar.ts, c["ps"], "INVALIDATED", score_10, score_reasons + ["risk/reward validation failed"], now)
             return self._reject("risk levels rejected", u.name, side)
@@ -1832,6 +1835,18 @@ class Scanner:
             self._watch(u.name, side_hint, entry_bar.ts, c["ps"], "INVALIDATED",
                         score_10, score_reasons + [structure_reason], now)
             return self._reject(structure_reason, u.name, str(structure_metrics))
+        if is_v2:
+            try:
+                risk_context = risk_context_from_db(self.db, now)
+                risk_ok, risk_reason = validate_daily_risk(
+                    c["v2_candidate"], risk_context, limits_from_legacy_config()
+                )
+            except Exception as exc:
+                log.exception("v2 persistent risk-state lookup failed | symbol=%s", u.name)
+                return self._reject("risk state unavailable", u.name,
+                                    f"{type(exc).__name__}: {exc}")
+            if not risk_ok:
+                return self._reject("v2 portfolio risk gate", u.name, risk_reason)
         valid_till, exit_by = self.risk.validity(now)
         lot = contract.lot_size or u.lot_size
         max_loss_per_lot = max(0.0, (px - lv["sl"]) * lot)      # informational only: nothing is rejected on it
