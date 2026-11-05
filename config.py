@@ -152,7 +152,6 @@ class Config:
     MIN_SESSION_BARS = 3          # closed candles today before VWAP is trusted (first signal ~09:30)
     # Candidate discovery is deliberately separate from the 10-point live-alert gate.
     # Candidates need a real setup vote; Telegram requires score >= ALERT_SCORE_MIN (8/10) plus every hard gate.
-    CANDIDATE_MIN_PRICE_SCORE = 0.0  # disabled as a gate; candidate discovery requires a real setup vote only
     MAX_OPTION_CHAIN_AGE_SEC = _env("MAX_OPTION_CHAIN_AGE_SEC", 60, int)
     # Intrabar alerts use a stricter chain-age ceiling. The REST request is
     # refreshed asynchronously; a cache entry alone never bypasses quote-age checks.
@@ -166,11 +165,6 @@ class Config:
     # broken snapshot, not to demand two-sided quotes on far strikes (one-sided far strikes are normal for stock options).
     CHAIN_ATM_STRIKES = _env("CHAIN_ATM_STRIKES", 2, int)            # strikes each side of ATM to validate
     CHAIN_MAX_MISSING_QUOTE_FRAC = _env("CHAIN_MAX_MISSING_QUOTE_FRAC", 0.4, float)
-    if CANDIDATE_MIN_PRICE_SCORE != 0.0:
-        raise ValueError("CANDIDATE_MIN_PRICE_SCORE is disabled; use ALERT_SCORE_MIN as the only numerical score gate")
-    EARLY_ENABLED = False  # never send provisional/early alerts
-    EARLY_MIN_SCORE = 0.0  # retained only for old saved-config compatibility
-    EARLY_DAILY_CAP = 0
     STAGE1_MIN_SCORE = 0.0  # no separate candidate score threshold
     # Signal modules are enabled by default but remain independently configurable. Every alert still passes the shared confirmation, score, chop, timing, risk and duplicate gates.
     # Counter-trend reversal has stricter stretch/RSI/structure requirements inside score_reversal().
@@ -188,9 +182,6 @@ class Config:
     MEX_MIN_ACCEL_ATR = _env("MEX_MIN_ACCEL_ATR", 0.25, float)
     MEX_CLOSE_POS = _env("MEX_CLOSE_POS", 0.75, float)
     MEX_MAX_EXTENSION_ATR = _env("MEX_MAX_EXTENSION_ATR", 1.8, float)
-    MEX_LIFECYCLE_ENABLED = False  # disabled: MEX is actionable on its detection candle; no next-candle dependency
-    MEX_CANDIDATE_MAX_BARS = _env("MEX_CANDIDATE_MAX_BARS", 1, int)     # candles to confirm before expiring
-    MEX_CONFIRMED_MAX_BARS = _env("MEX_CONFIRMED_MAX_BARS", 6, int)     # candles a confirmed explosion stays live
     # Independent Momentum Explosion + Opening Range Breakout engine (5m completed candles).
     MOMENTUM_ORB_ENABLED = _env("MOMENTUM_ORB_ENABLED", True, _bool)
     MEX_ORB_LAST_TIME = (_env("ORB_LAST_HOUR", 14, int), _env("ORB_LAST_MINUTE", 45, int))
@@ -295,9 +286,7 @@ class Config:
     VOL_TOD_GATE_ENABLED = _env("VOL_TOD_GATE_ENABLED", True, _bool)  # trigger candle volume vs SAME time-of-day on prior days
     VOL_TOD_MIN = _env("VOL_TOD_MIN", 0.8, float)
     VOL_TOD_MIN_DAYS = 3
-    FUT_OI_GATE_ENABLED = _env("FUT_OI_GATE_ENABLED", False, _bool)  # index futures OI falling into a breakout (short covering); logged always, gate off until calibrated
     FUT_OI_BARS = 3
-    FUT_OI_MIN_CHG_PCT = _env("FUT_OI_MIN_CHG_PCT", -0.15, float)
 
     # ---- outcome realism (tracker / adaptive learning) ----
     REALISTIC_EXITS = _env("REALISTIC_EXITS", True, _bool)   # exits filled on the bid side (half-spread slippage) and net of costs
@@ -319,8 +308,6 @@ class Config:
     # ---- contract picker ----
     INDEX_MIN_DTE = 1
     STOCK_MIN_DTE = 2
-    # Deprecated compatibility flag; V7 does not reject on estimated spread-cost thresholds.
-    SPREAD_GATE_ENABLED = _env("SPREAD_GATE_ENABLED", False, _bool)
     MAX_SPREAD_PCT = _env("MAX_SPREAD_PCT", 3.0, float)              # INDEX options
     MAX_SPREAD_PCT_STOCK = _env("MAX_SPREAD_PCT_STOCK", 4.0, float)  # STOCK options
     MIN_OI_LOTS = {"INDEX": 100, "STOCK": 20}       # OI / lot_size. Upstox/Dhan report OI in units.
@@ -344,12 +331,7 @@ class Config:
     ENTRY_BAND_DOWN = 0.002
     ENTRY_BAND_UP = 0.004
     VALID_MINUTES = 10
-    DAILY_SIGNAL_CAP = 15
-    MAX_DAILY_LOSSES = 4          # circuit breaker: stop new signals after this many stopped-out trades today
-    BLOCK_SAME_SIDE_AFTER_LOSS = True   # no re-entry on the same underlying+side after it stopped us out today
-    MAX_ACTIVE = 6
     SYMBOL_COOLDOWN_MIN = _env("SYMBOL_COOLDOWN_MIN", 0, int)  # no time cooldown; active-signal and quality guards prevent duplicates
-    MAX_PER_GROUP = 3
     SCAN_DIGEST_EVERY = _env("SCAN_DIGEST_EVERY", 6, int)   # Telegram 'why no signal' digest every N scans without a signal (0 = off)
     PING_RUNS_TICK = False  # compatibility only; /ping is always keep-alive-only
     TRACK_INTERVAL_SEC = 4
