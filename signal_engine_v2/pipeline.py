@@ -21,6 +21,7 @@ class SignalPipeline:
         self.strategies = tuple(strategies)
         self.config = config or EngineConfig()
         self._emitted: set[str] = set()
+        self._emitted_session_date = None
         self._lock = RLock()
 
     def collect(self, snapshot: MarketSnapshot) -> list[Candidate]:
@@ -119,9 +120,15 @@ class SignalPipeline:
             rejected.extend(SignalDecision(x, DecisionState.REJECTED, x.identity,
                               ("superseded_by_unified_selector",)) for x in group[1:])
 
-        # Idempotency protects repeated scans of the same candle/setup.
+        # Idempotency protects repeated scans of the same candle/setup. Clear
+        # yesterday's keys when the trading date advances to keep a long-lived
+        # Render worker's memory bounded.
         fresh: list[SignalDecision] = []
+        session_date = snapshot.candle.timestamp.date()
         with self._lock:
+            if self._emitted_session_date != session_date:
+                self._emitted.clear()
+                self._emitted_session_date = session_date
             for decision in selected:
                 dedup_key = decision.decision_key + "|" + decision.state.value
                 if dedup_key in self._emitted:
