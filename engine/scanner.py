@@ -1597,7 +1597,9 @@ class Scanner:
         except Exception:
             log.exception("signal feature logging failed")
         self.tracker.add(sig, contract)
-        self._queue_signal_alert(sig, dedupe_key, format_signal(sig), now)
+        telegram_acknowledged = self._queue_signal_alert(sig, dedupe_key, format_signal(sig), now)
+        log.info("signal lifecycle | signal_id=%s | database_saved=true | telegram_acknowledged=%s",
+                 sig.id, bool(telegram_acknowledged))
         log.info("SIGNAL %s %s %s %s score=%.2f/10", sig.underlying, sig.side, sig.contract, strategy, conf)
         return sig
 
