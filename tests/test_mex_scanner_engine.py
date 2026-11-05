@@ -38,7 +38,7 @@ class MexScannerEngineTests(unittest.TestCase):
         self.assertEqual(snapshot["no_trigger"], 1)
         self.assertEqual(snapshot["gate_failures"]["fresh_boundary_break"], 2)
 
-    def test_engine_owns_fixed_universe_and_lifecycle(self):
+    def test_engine_owns_fixed_universe_without_lifecycle(self):
         engine = MomentumExplosionScanner(MemoryDB())
         self.assertEqual(len(engine.universe), 100)
         self.assertEqual(engine.universe, frozenset(MEX_SYMBOLS))
@@ -46,7 +46,8 @@ class MexScannerEngineTests(unittest.TestCase):
         history, session = trend_scenario(1)
         result = engine.scan(MEX_SYMBOLS[0], session, history + session)
         self.assertTrue(result["eligible"])
-        self.assertIn(result["state"], {"IDLE", "CANDIDATE", "CONFIRMED", "EXPIRED", "INVALIDATED"})
+        self.assertIn(result["state"], {"IDLE", "CONFIRMED"})
+        self.assertEqual(engine.snapshot()["pending"], 0)
 
 
 if __name__ == "__main__":
