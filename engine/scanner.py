@@ -33,7 +33,6 @@ from utils.market_hours import can_signal, IST
 from signal_engine_v2.runtime import create_engine as create_v2_engine, evaluate_legacy_candles
 from signal_engine_v2.models import DecisionState as V2DecisionState
 from signal_engine_v2.config import EngineConfig as V2EngineConfig
-from signal_engine_v2.risk_gate import risk_context_from_db, validate_daily_risk, limits_from_legacy_config
 from signal_engine_v2.contracts import (validate_option_quote, select_validated_contract)
 
 log = logging.getLogger("scanner")
@@ -1887,18 +1886,6 @@ class Scanner:
             self._watch(u.name, side_hint, entry_bar.ts, c["ps"], "INVALIDATED",
                         score_10, score_reasons + [structure_reason], now)
             return self._reject(structure_reason, u.name, str(structure_metrics))
-        if is_v2:
-            try:
-                risk_context = risk_context_from_db(self.db, now)
-                risk_ok, risk_reason = validate_daily_risk(
-                    c["v2_candidate"], risk_context, limits_from_legacy_config()
-                )
-            except Exception as exc:
-                log.exception("v2 persistent risk-state lookup failed | symbol=%s", u.name)
-                return self._reject("risk state unavailable", u.name,
-                                    f"{type(exc).__name__}: {exc}")
-            if not risk_ok:
-                return self._reject("v2 portfolio risk gate", u.name, risk_reason)
         valid_till, exit_by = self.risk.validity(now)
         lot = contract.lot_size or u.lot_size
         max_loss_per_lot = max(0.0, (px - lv["sl"]) * lot)      # informational only: nothing is rejected on it
