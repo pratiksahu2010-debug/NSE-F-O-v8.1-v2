@@ -79,12 +79,10 @@ def score_candidate(candidate: Candidate, snapshot: MarketSnapshot):
 
     adxv, pdi, ndi = _v(snapshot, "adx_14"), _v(snapshot, "plus_di"), _v(snapshot, "minus_di")
     if adxv is None or pdi is None or ndi is None:
-        adx_score = 5.0
+        adx_score = 0.0
     else:
         directional = pdi > ndi if bull else ndi > pdi
-        adx_score = (10.0 if adxv >= 22 and directional else
-                     7.0 if adxv >= 18 and directional else
-                     3.0 if adxv >= 18 else 0.0)
+        adx_score = 10.0 if adxv >= 22 and directional else 0.0
 
     rvol = _v(snapshot, "rvol_20")
     if rvol is None:
@@ -103,6 +101,14 @@ def score_candidate(candidate: Candidate, snapshot: MarketSnapshot):
             points += 5.0
         momentum = points
 
+    # Relative strength confirms leadership but is not a mandatory gate.
+    rs = _v(snapshot, "relative_strength_vs_index")
+    rs_bonus = 5.0 if rs is not None and ((rs > 0) if bull else (rs < 0)) else 0.0
+    impulse = _v(snapshot, "impulse_score")
+    impulse_bonus = max(0.0, min(5.0, impulse or 0.0))
+    regime = str(snapshot.metadata.get("market_regime", "UNKNOWN")).upper()
+    trend_regime = "TRENDING_UP" if bull else "TRENDING_DOWN"
+    regime_bonus = 2.0 if regime in {trend_regime, "VOLATILITY_EXPANSION"} else 0.0
     htf = snapshot.metadata.get("htf_bias")
     wanted = 1 if bull else -1
     htf_score = 10.0 if htf == wanted else (0.0 if htf == -wanted else 5.0)
@@ -124,6 +130,7 @@ def score_candidate(candidate: Candidate, snapshot: MarketSnapshot):
     else:
         volatility = 0.0
 
+    setup = max(0.0, min(20.0, setup + rs_bonus + impulse_bonus + regime_bonus))
     breakdown = ScoreBreakdown(setup, trend, vwap_score, adx_score, volume_score,
                                momentum, htf_score, candle_score, volatility)
     grade = "A+" if breakdown.total >= 85 else "A" if breakdown.total >= 75 else "B" if breakdown.total >= 65 else "REJECT"
