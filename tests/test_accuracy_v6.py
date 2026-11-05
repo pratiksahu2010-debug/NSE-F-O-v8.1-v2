@@ -147,14 +147,14 @@ class TestContext(unittest.TestCase):
                           ctx.veto_from(ctx.compute_features("INDEX", "CALL", [], [], self._chain(wall_oi=150_000), 45.0,
                                                              25010.0, 1, 0, None), "INDEX", False))   # not dominant -> no veto
 
-    def test_futures_oi_gate_is_off_by_default_but_logged(self):
+    def test_futures_oi_is_diagnostic_only_and_never_vetoes(self):
         t0 = datetime(2026, 10, 15, 10, 0, tzinfo=IST)
         fut = [cndl(t0 + timedelta(minutes=5 * i), 100, oi=1_000_000 - i * 5_000) for i in range(6)]
-        self.assertLess(ctx.fut_oi_change_pct(fut), 0)
-        f = self.feats(fut_oi_chg_pct=ctx.fut_oi_change_pct(fut))
+        change = ctx.fut_oi_change_pct(fut)
+        self.assertLess(change, 0)
+        f = self.feats(fut_oi_chg_pct=change)
         self.assertIsNone(ctx.veto_from(f, "INDEX", False))
-        with Flags(FUT_OI_GATE_ENABLED=True, FUT_OI_MIN_CHG_PCT=-0.1):
-            self.assertEqual(ctx.veto_from(f, "INDEX", False)[0], "futures OI falling")
+        self.assertIsNone(ctx.veto_from(f, "STOCK", False))
 
 
 class TestAdaptiveWired(unittest.TestCase):
