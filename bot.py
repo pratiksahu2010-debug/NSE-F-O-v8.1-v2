@@ -898,6 +898,7 @@ class Bot:
                           "pullback_trend_bars": cfg.V7_PULLBACK_TREND_BARS,
                           "pullback_touch_atr": cfg.V7_PULLBACK_TOUCH_ATR},
             "last_scan": last_scan,
+            "activity": self.db.activity_summary(mh.now().date().isoformat()),
             "telegram_outbox_worker": dict(getattr(self.scanner, "_outbox_status", {}) or {}) if self.scanner else {},
             "candidate_watchlist_worker": dict(getattr(self.scanner, "_candidate_persist_status", {}) or {}) if self.scanner else {},
             "candle_archive_writer": self.history_writer.snapshot(),
