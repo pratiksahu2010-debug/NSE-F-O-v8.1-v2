@@ -51,8 +51,8 @@ def evaluate_legacy_candles(engine: SignalPipeline, underlying: str,
                             instrument_kind: str, timeframe: str,
                             candles, live_candle=None,
                             futures_volume_by_timestamp=None,
-                            metadata=None, risk_context=None,
-                            risk_limits=None) -> list[SignalDecision]:
+                            session_candles=None, metadata=None,
+                            risk_context=None, risk_limits=None) -> list[SignalDecision]:
     snapshot = build_snapshot(
         underlying, instrument_kind, timeframe, candles,
         live_candle=live_candle,
