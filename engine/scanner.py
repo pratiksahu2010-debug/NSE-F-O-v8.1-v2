@@ -802,6 +802,9 @@ class Scanner:
 
     def stage1(self, now: datetime):
         self._scan_now = now
+        if not hasattr(self, "_v2_preview_lock"):
+            self._v2_preview_lock = threading.Lock()
+            self._v2_early_previews = {}
         with self._v2_preview_lock:
             for preview_key, preview in list(self._v2_early_previews.items()):
                 try:
