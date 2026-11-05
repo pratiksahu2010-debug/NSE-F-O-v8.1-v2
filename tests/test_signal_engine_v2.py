@@ -122,3 +122,8 @@ def test_impulse_detector_labels_multi_factor_expansion():
     result = detect_impulse(values, candle)
     assert result["impulse_score"] >= 4.0
     assert result["move_potential"] == "EXPLOSIVE"
+
+def test_engine_config_cannot_lower_adx_floor():
+    import pytest
+    with pytest.raises(ValueError, match="cannot be lower"):
+        EngineConfig(min_adx=21.0)
