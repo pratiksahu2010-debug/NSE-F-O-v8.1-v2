@@ -132,7 +132,42 @@ class Tracker:
 
     def evaluate(self, sig: Signal, prem: float, spot: Optional[float], t: datetime):
         """Pure state machine (unit-tested): updates `sig` and sends alerts."""
-        sig.prem_high = max(sig.prem_high, prem)
+        prem = float(prem)
+        sig.prem_high = max(float(sig.prem_high or sig.ltp), prem)
+        sig.prem_low = min(float(sig.prem_low or prem), prem)
+        if spot is not None:
+            try:
+                spot = float(spot)
+            except (TypeError, ValueError, OverflowError):
+                spot = None
+            if spot is not None and spot > 0:
+                sig.spot_high = max(float(sig.spot_high or spot), spot)
+                sig.spot_low = min(float(sig.spot_low or spot), spot)
+
+        # Track excursions in initial-risk (R) units, separately for option
+        # premium and underlying price. These are diagnostic only and never
+        # change the stop, target, or exit decision.
+        premium_risk = max(0.0, float(sig.ltp) - float(sig.sl))
+        if premium_risk > 0:
+            sig.premium_mae_r = max(
+                float(sig.premium_mae_r or 0.0),
+                max(0.0, float(sig.ltp) - float(sig.prem_low)) / premium_risk,
+            )
+            sig.premium_mfe_r = max(
+                float(sig.premium_mfe_r or 0.0),
+                max(0.0, float(sig.prem_high) - float(sig.ltp)) / premium_risk,
+            )
+        underlying_risk = abs(float(sig.spot) - float(sig.und_sl))
+        if underlying_risk > 0 and sig.spot_high > 0 and sig.spot_low > 0:
+            if str(sig.side).upper() == "CALL":
+                adverse = max(0.0, float(sig.spot) - float(sig.spot_low))
+                favorable = max(0.0, float(sig.spot_high) - float(sig.spot))
+            else:
+                adverse = max(0.0, float(sig.spot_high) - float(sig.spot))
+                favorable = max(0.0, float(sig.spot) - float(sig.spot_low))
+            sig.underlying_mae_r = max(float(sig.underlying_mae_r or 0.0), adverse / underlying_risk)
+            sig.underlying_mfe_r = max(float(sig.underlying_mfe_r or 0.0), favorable / underlying_risk)
+
         self._last_prem[sig.id] = prem
         if past_exit_time(t):
             return self._close(sig, prem, "TIME", "TIME_EXIT", "Hard exit time reached")
