@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from signal_engine_v2.config import EngineConfig
 from signal_engine_v2.models import (Candidate, Candle, CandleState, MarketSnapshot,
@@ -19,9 +19,12 @@ class OneCandidate:
 
 
 def test_runtime_applies_daily_risk_and_releases_rejected_candidate_for_retry():
-    bar = Candle(datetime(2026, 11, 5, 9, 30, tzinfo=timezone.utc),
-                 100, 105, 99, 104, 1000, True)
-    snap = MarketSnapshot("NIFTY", "INDEX", "5m", bar)
+    start = datetime(2026, 11, 4, 9, 15, tzinfo=timezone.utc)
+    bars = tuple(Candle(start + timedelta(minutes=5*i), 100+i*.01,
+                        101+i*.01, 99+i*.01, 100.5+i*.01, 1000, True)
+                 for i in range(230))
+    bar = bars[-1]
+    snap = MarketSnapshot("NIFTY", "INDEX", "5m", bar, bars)
     engine = SignalPipeline([OneCandidate()], EngineConfig(unified_scoring_enabled=False))
     ctx = RiskContext(now=bar.timestamp, daily_losses=4)
     limits = RiskLimits(max_daily_losses=4)
