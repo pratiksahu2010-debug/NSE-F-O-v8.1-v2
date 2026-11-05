@@ -26,7 +26,7 @@ def test_runtime_selects_valid_contract_and_builds_signal():
                         "NIFTY26NOV25000CE", 50, .05)
     quote = OptionQuote(25000, "CE", ltp=150, bid=149, ask=151,
                         bid_qty=100, ask_qty=100, oi=10000, volume=2000,
-                        iv=15, delta=.55, theta=-5)
+                        iv=15, delta=.55, theta=-5, key="NSE_FO|NIFTY_CE")
     chain = ChainSnapshot("NIFTY", expiry, 25005, 1.1, {(25000, "CE"): quote}, now)
     candidate = Candidate("NIFTY", "INDEX", Side.CALL, "BIG_MOMENTUM", "runtime-build",
                           ts, CandleState.CLOSED, 85, 25000, 24950, 25090)
