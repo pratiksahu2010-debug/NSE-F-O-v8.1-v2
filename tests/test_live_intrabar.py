@@ -312,7 +312,8 @@ def test_live_mex_uses_configured_impulse_and_range_expansion_without_macd_veto(
         patch.object(live_module, "rsi", return_value=[55.0] * len(completed)),
         patch.object(live_module, "macd", return_value=([], [], [-1.0, -2.0])),
     ):
-        result = LiveIntrabarEngine().detect(
+        engine = LiveIntrabarEngine()
+        result = engine.detect(
             und, session, completed, partial, now, cfg,
             allow_sequential=False, allow_mex=True, allow_orb=False,
         )
