@@ -32,6 +32,7 @@ from telegram_service import format_signal
 from utils.market_hours import can_signal, IST
 from signal_engine_v2.runtime import create_engine as create_v2_engine, evaluate_legacy_candles
 from signal_engine_v2.models import DecisionState as V2DecisionState
+from signal_engine_v2.config import EngineConfig as V2EngineConfig
 from signal_engine_v2.risk_gate import risk_context_from_db, validate_daily_risk, limits_from_legacy_config
 from signal_engine_v2.contracts import (validate_option_quote, select_validated_contract)
 
@@ -158,7 +159,11 @@ class Scanner:
         self.risk, self.tracker, self.hist = risk, tracker, hist
         self.history_writer = history_writer
         self.adaptive = Adaptive(db)
-        self.v2_engine = create_v2_engine()
+        self.v2_engine = create_v2_engine(config=V2EngineConfig(
+            min_score=float(cfg.V2_MIN_SCORE),
+            min_risk_reward=float(cfg.V2_MIN_RR),
+            min_history_bars=int(cfg.V2_MIN_HISTORY_BARS),
+        ))
         self.ban: Set[str] = set()
         self.last_stats = {}
         self.last_cycle_at: Optional[str] = None
