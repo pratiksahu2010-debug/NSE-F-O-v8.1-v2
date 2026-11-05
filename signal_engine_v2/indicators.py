@@ -101,3 +101,18 @@ def calculate(candles: Sequence, session_candles: Sequence | None = None) -> Dic
         out["mfi_14"] = None
 
     return out
+
+
+def enrich_snapshot(snapshot):
+    """Return a copy with indicators calculated from closed candles only.
+
+    For intrabar evaluation, the live partial candle remains available as
+    snapshot.candle, but is deliberately excluded from indicator warm-up and
+    historical baselines to avoid mixing provisional values with confirmed data.
+    """
+    from dataclasses import replace
+    closed = [bar for bar in snapshot.candles if bar.is_closed]
+    if snapshot.candle.is_closed and (not closed or closed[-1].timestamp != snapshot.candle.timestamp):
+        closed.append(snapshot.candle)
+    session = [bar for bar in closed if bar.timestamp.date() == snapshot.candle.timestamp.date()]
+    return replace(snapshot, indicators=calculate(closed, session))
