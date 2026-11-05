@@ -11,6 +11,7 @@ from utils.market_hours import IST
 def _stage1_scanner(symbol, simple_candidate):
     scanner = scanner_module.Scanner.__new__(scanner_module.Scanner)
     scanner.unds = [symbol]
+    scanner.pool = Mock()
     scanner.ban = set()
     scanner.hist = {}
     scanner.live_context = {}
