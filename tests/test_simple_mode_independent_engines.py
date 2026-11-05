@@ -67,6 +67,8 @@ def test_simple_mode_runs_mex_and_orb_without_changing_simple_normal_route():
     assert hits == 1
     assert len(candidates) == 1
     assert candidates[0]["selected_engine"] == "SIMPLE_TREND"
+    assert candidates[0]["votes"][0].name == "SIMPLE_TREND"
+    assert candidates[0]["entry_candidate"]["strategy"] == "SIMPLE_TREND"
 
 
 def test_simple_mode_live_dispatch_keeps_mex_and_orb_but_not_legacy_normal():
