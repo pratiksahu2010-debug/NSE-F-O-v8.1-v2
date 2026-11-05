@@ -12,7 +12,8 @@ from .adapter import build_snapshot
 from .config import EngineConfig
 from .models import DecisionState, SignalDecision
 from .pipeline import SignalPipeline
-from .risk_gate import RiskContext, RiskLimits, limits_from_legacy_config, validate_daily_risk
+from .risk_gate import (RiskContext, RiskLimits, limits_from_legacy_config,
+                        risk_context_from_db, validate_daily_risk)
 from .strategies import default_strategies
 from .contracts import ContractPolicy, select_validated_contract
 from .signal_builder import build_signal
@@ -101,3 +102,10 @@ def finalize_decision(engine: SignalPipeline, decision: SignalDecision,
     if signal is None:
         engine.release(decision)
     return signal, reason
+
+
+def evaluate_with_db(engine: SignalPipeline, snapshot, db, now,
+                     risk_limits: Optional[RiskLimits] = None) -> list[SignalDecision]:
+    """Evaluate candidates using restart-safe counts from the existing DB."""
+    context = risk_context_from_db(db, now)
+    return evaluate_snapshot(engine, snapshot, context, risk_limits)
