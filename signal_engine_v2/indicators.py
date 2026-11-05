@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from typing import Dict, Sequence
 
 from indicators.core import (adx, atr, body_frac, close_pos, ema, macd, rsi,
-                             vwap, vol_ratio)
+                             vwap)
 from .market_regime import classify_regime
 from .impulse_detector import detect_impulse
 from .relative_strength import relative_strength, sector_relative_strength
@@ -20,6 +20,18 @@ def _legacy(candles):
     # Adapt the v2 immutable candle model to the existing tested pure-Python core.
     return [SimpleNamespace(ts=c.timestamp, o=c.open, h=c.high, l=c.low,
                             c=c.close, v=c.volume, oi=0.0) for c in candles]
+
+
+def _strict_rvol_20(volumes: Sequence[float]) -> float | None:
+    """RVOL is valid only with 20 complete positive-volume reference bars."""
+    if len(volumes) < 21:
+        return None
+    prior = [float(value) for value in volumes[-21:-1]]
+    current = float(volumes[-1])
+    if current <= 0 or len(prior) != 20 or any(value <= 0 for value in prior):
+        return None
+    baseline = sum(prior) / 20.0
+    return current / baseline if baseline > 0 else None
 
 
 def calculate(candles: Sequence, session_candles: Sequence | None = None) -> Dict[str, float | None]:
@@ -57,7 +69,7 @@ def calculate(candles: Sequence, session_candles: Sequence | None = None) -> Dic
     vw = vwap(session_legacy)
     out["session_vwap"] = vw[-1] if vw else None
     out["vwap_slope_3"] = (vw[-1] - vw[-4]) if len(vw) >= 4 else None
-    out["rvol_20"] = vol_ratio(legacy, 20) if len(bars) >= 21 else None
+    out["rvol_20"] = _strict_rvol_20(volumes)
 
     last = legacy[-1]
     out["candle_body_fraction"] = body_frac(last)
@@ -130,7 +142,7 @@ def enrich_snapshot(snapshot, session_candles=None):
     if str(snapshot.instrument_kind).upper() == "INDEX":
         values["rvol_20"] = None
     if len(session_legacy) >= 21 and all(x.v > 0 for x in session_legacy[-21:]):
-        values["rvol_20"] = vol_ratio(session_legacy, 20)
+        values["rvol_20"] = _strict_rvol_20([x.v for x in session_legacy])
     meta = dict(snapshot.metadata)
     meta["relative_strength_vs_index"] = relative_strength(
         meta.get("underlying_return_pct"), meta.get("index_return_pct"))
