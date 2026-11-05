@@ -842,11 +842,25 @@ class Bot:
 
     def diagnostics(self) -> dict:
         """Expanded operational diagnostics; callers must protect this behind CRON_SECRET."""
-        modules = {
-            "normal_trend_engine": True,
-            "normal_indicators": ["EMA9/21", "MACD(12/26/9)", "session_VWAP", "RSI(14)", "ADX(14)", "+DI/-DI"],
-            "normal_setup_paths": ["EARLY_TREND", "TREND_PULLBACK", "MOMENTUM_BREAKOUT"],
-            "normal_thresholds": {
+        simple_mode = str(cfg.STRATEGY_MODE).upper() != "LEGACY"
+        if simple_mode:
+            normal_indicators = ["EMA9/21", "session_VWAP", "RSI(14)", "ADX(14)"]
+            normal_setup_paths = ["SIMPLE_TREND"]
+            normal_thresholds = {
+                "adx_min": cfg.SIMPLE_ADX_MIN,
+                "rsi_call_min": cfg.SIMPLE_RSI_CALL_MIN,
+                "rsi_call_max": cfg.SIMPLE_RSI_CALL_MAX,
+                "rsi_put_min": cfg.SIMPLE_RSI_PUT_MIN,
+                "rsi_put_max": cfg.SIMPLE_RSI_PUT_MAX,
+                "fresh_bars": cfg.SIMPLE_FRESH_BARS,
+                "max_entry_extension_atr": cfg.SIMPLE_MAX_EXTENSION_ATR,
+                "minimum_first_target_rr": cfg.SIMPLE_MIN_RR_T1,
+            }
+            normal_15m_context = "reject_opposing_allow_neutral"
+        else:
+            normal_indicators = ["EMA9/21", "MACD(12/26/9)", "session_VWAP", "RSI(14)", "ADX(14)", "+DI/-DI"]
+            normal_setup_paths = ["EARLY_TREND", "TREND_PULLBACK", "MOMENTUM_BREAKOUT"]
+            normal_thresholds = {
                 "adx_min": cfg.NORMAL_ADX_MIN,
                 "adx_established": cfg.NORMAL_ADX_ESTABLISHED,
                 "di_min_gap": cfg.NORMAL_DI_MIN_GAP,
@@ -857,10 +871,17 @@ class Bot:
                 "pullback_atr": cfg.NORMAL_PULLBACK_ATR,
                 "max_entry_extension_atr": cfg.NORMAL_MAX_EXTENSION_ATR,
                 "breakout_lookback": cfg.NORMAL_BREAKOUT_LOOKBACK,
-            },
+            }
+            normal_15m_context = "informational_only"
+        modules = {
+            "normal_strategy_mode": "SIMPLE" if simple_mode else "LEGACY",
+            "normal_trend_engine": True,
+            "normal_indicators": normal_indicators,
+            "normal_setup_paths": normal_setup_paths,
+            "normal_thresholds": normal_thresholds,
             "normal_diagnostics": ["scanned", "detected", "selected", "priority_superseded",
                                    "no_trigger", "setups", "gate_failures", "per_symbol_latest"],
-            "normal_15m_context": "informational_only",
+            "normal_15m_context": normal_15m_context,
             "normal_fixed_stock_universe": 50,
             "orb_engine": cfg.MOMENTUM_ORB_ENABLED,
             "orb_fixed_universe": 100,
@@ -872,8 +893,8 @@ class Bot:
             "mex_engine": cfg.MEX_ENABLED,
             "mex_fixed_universe": 100,
             "mex_next_candle_confirmation_required": False,
-            "live_intrabar_pipeline": True,
-            "live_intrabar_trigger_mode": "upstox_websocket_partial_bar",
+            "live_intrabar_pipeline": bool(cfg.LIVE_INTRABAR_ENABLED),
+            "live_intrabar_trigger_mode": "upstox_websocket_partial_bar" if cfg.LIVE_INTRABAR_ENABLED else "disabled",
             "legacy_v7_sequential_prerequisite": False,
             "signal_only": True,
             "orders_enabled": False,
@@ -898,6 +919,7 @@ class Bot:
                           "pullback_trend_bars": cfg.V7_PULLBACK_TREND_BARS,
                           "pullback_touch_atr": cfg.V7_PULLBACK_TOUCH_ATR},
             "last_scan": last_scan,
+            "activity": self.db.activity_summary(mh.now().date().isoformat()),
             "telegram_outbox_worker": dict(getattr(self.scanner, "_outbox_status", {}) or {}) if self.scanner else {},
             "candidate_watchlist_worker": dict(getattr(self.scanner, "_candidate_persist_status", {}) or {}) if self.scanner else {},
             "candle_archive_writer": self.history_writer.snapshot(),

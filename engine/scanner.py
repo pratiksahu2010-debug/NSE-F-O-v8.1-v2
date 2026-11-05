@@ -1,4 +1,5 @@
 """Three-stage funnel: (1) cheap spot scan -> (2) OI/chain enrichment -> (3) score, pick contract, risk, alert."""
+import hashlib
 import logging
 import math
 import threading
@@ -121,7 +122,7 @@ def _stage1_fetch_results(pool, symbols, fetcher, timeout_seconds):
 def _normal_15m_context_matches(side: str, htf: int) -> bool:
     """Normal entries require completed 15m trend context in the trade direction."""
     expected = 1 if str(side).upper() == "CALL" else -1 if str(side).upper() == "PUT" else 0
-    return expected != 0 and int(htf or 0) == expected
+    return expected != 0 and int(htf or 0) in (expected, 0)
 
 
 def fresh_reference(earlier: Optional[dict], now: datetime) -> Optional[dict]:
@@ -308,10 +309,29 @@ class Scanner:
             log.exception("candle archive failed for %s", name)
 
     def _reject(self, why: str, name: str = "", detail: str = ""):
-        """Count and retain the rejection reason at aggregate and per-symbol levels."""
-        key = why.split(":")[0].split(" (")[0][:40]
+        """Count and retain a rejected candidate in diagnostics and durable daily history."""
+        key = why.split(":")[0].split(" (")[0][:80]
         self._rej[key] = self._rej.get(key, 0) + 1
         self._note_symbol(name, "stage2/3", why, detail)
+        if name:
+            try:
+                recorder = getattr(self.db, "record_rejection", None)
+                if callable(recorder):
+                    now = datetime.now(IST)
+                    ts = now.isoformat(timespec="seconds")
+                    cycle = str(getattr(self, "last_cycle_started_at", None) or ts)
+                    side = ""
+                    for candidate_side in ("CALL", "PUT"):
+                        candidate = getattr(self, "candidate_watchlist", {}).get(f"{name}:{candidate_side}", {})
+                        if candidate.get("status") in {"CONFIRMED", "INVALIDATED", "NEAR_THRESHOLD"}:
+                            side = candidate_side
+                    event_id = hashlib.sha256(
+                        f"{cycle}|{name}|{side}|{key}|{detail}".encode("utf-8")
+                    ).hexdigest()
+                    recorder(event_id, ts, now.date().isoformat(), name, side, "stage2/3", key, detail)
+            except Exception:
+                # Rejection analytics must never interrupt the live signal pipeline.
+                log.exception("could not persist rejected candidate | symbol=%s | reason=%s", name, key)
         log.info("skip %s: %s %s", name, why, detail)
         return None
 
@@ -645,7 +665,7 @@ class Scanner:
         return raw, fut
 
     def _simple_candidate(self, u: Underlying, session: List[Candle], allc: List[Candle], fut: List[Candle],
-                          now: datetime, counts: dict):
+                          now: datetime, counts: dict, context_15m: int = 0):
         """SIMPLE mode: evaluate the EMA 9/21 + VWAP + RSI + ADX rule on the latest closed candle.
 
         Returns a stage-2 candidate dict, or None when there is no trigger. Diagnostics reuse the
@@ -660,7 +680,8 @@ class Scanner:
             rsi_put_max=float(cfg.SIMPLE_RSI_PUT_MAX), rsi_put_min=float(cfg.SIMPLE_RSI_PUT_MIN),
             fresh_bars=int(cfg.SIMPLE_FRESH_BARS), min_bars=int(cfg.SIMPLE_MIN_BARS),
             min_session_bars=int(cfg.SIMPLE_MIN_SESSION_BARS),
-            max_entry_extension_atr=float(cfg.SIMPLE_MAX_EXTENSION_ATR))
+            max_entry_extension_atr=float(cfg.SIMPLE_MAX_EXTENSION_ATR),
+            context_15m=int(context_15m or 0))
         diag["scanned"] += 1
         side = int(result.get("side") or 0)
         diag["latest"][u.name] = {"reason": result.get("reason", ""), "setup_type": result.get("setup_type"),
@@ -780,7 +801,7 @@ class Scanner:
             # MEX and ORB independently for their own universes in BOTH modes.
             if cfg.STRATEGY_MODE != "LEGACY":
                 try:
-                    simple_cand = self._simple_candidate(u, session, allc, fut, now, counts)
+                    simple_cand = self._simple_candidate(u, session, allc, fut, now, counts, context_15m=htf_bias(allc, cfg.HTF_MINUTES))
                 except Exception as exc:       # one bad symbol must never abort the whole scan
                     counts["evaluation_errors"] += 1
                     self._note_symbol(u.name, "stage1", "simple rule evaluation error",
@@ -1160,6 +1181,11 @@ class Scanner:
     def _maintenance_connection(self):
         """Create one isolated database client shared only by background maintenance workers."""
         with self._maintenance_db_lock:
+            # Injected in-memory databases are deliberately shared by test workers;
+            # opening a second production PostgreSQL connection would be invalid.
+            db = getattr(self, "db", None)
+            if getattr(db, "_test_injected", False):
+                return db
             if self._outbox_db is None:
                 from db import DB
                 self._outbox_db = DB(initialize_schema=False)
@@ -1585,11 +1611,21 @@ class Scanner:
         # Normal/SIMPLE uses the same nearby structural invalidation reference as
         # the legacy trend path (EMA9, session VWAP, or trigger-candle extreme).
         # RiskRules still rejects stops outside its permitted ATR envelope.
+        required_rr = max(float(cfg.MIN_RR_T1), float(getattr(cfg, "SIMPLE_MIN_RR_T1", 1.5))) if is_simple else float(cfg.MIN_RR_T1)
         stop_dist = invalidation_distance(side, c["session"], c["allc"], spot, strategy)
-        lv = self.risk.levels(px, q.delta, a5, contract.tick_size, side, spot, stop_dist)
+        lv = self.risk.levels(px, q.delta, a5, contract.tick_size, side, spot, stop_dist,
+                              min_target_rr=required_rr if is_simple else None)
         if not lv or float(lv.get("rr", 0.0)) < float(cfg.MIN_RR_T1):
             self._watch(u.name, side, entry_bar.ts, c["ps"], "INVALIDATED", score_10, score_reasons + ["risk/reward validation failed"], now)
             return self._reject("risk levels rejected", u.name, side)
+        if is_simple:
+            underlying_risk = abs(spot - float(lv.get("und_sl") or 0.0))
+            underlying_reward = (float(lv.get("und_t1") or 0.0) - spot) * (1 if side == "CALL" else -1)
+            first_target_rr = underlying_reward / underlying_risk if underlying_risk > 0 else 0.0
+            if underlying_reward <= 0 or first_target_rr + 1e-9 < required_rr:
+                detail = f"Normal first-target RR {first_target_rr:.2f} below required {required_rr:.2f}"
+                self._watch(u.name, side_hint, entry_bar.ts, c["ps"], "INVALIDATED", score_10, score_reasons + [detail], now)
+                return self._reject("normal minimum reward/risk", u.name, detail)
         # A repeated swing level immediately ahead of price can cap the realistic
         # first target. Reduce T1 to just before that obstacle, or reject only
         # when the remaining structural reward no longer meets the existing RR.
@@ -1603,9 +1639,9 @@ class Scanner:
                     structural_risk = (spot - float(lv["und_sl"])) * sgn
                     structural_reward = (obstacle_target - spot) * sgn
                     obstacle_rr = structural_reward / structural_risk if structural_risk > 0 else 0.0
-                    if structural_reward <= 0 or obstacle_rr < float(cfg.MIN_RR_T1):
+                    if structural_reward <= 0 or obstacle_rr < required_rr:
                         detail = (f"nearby {'resistance' if sgn > 0 else 'support'} at {obstacle:.2f} "
-                                  f"leaves RR {obstacle_rr:.2f} below {float(cfg.MIN_RR_T1):.2f}")
+                                  f"leaves RR {obstacle_rr:.2f} below {required_rr:.2f}")
                         self._watch(u.name, side, entry_bar.ts, c["ps"], "INVALIDATED",
                                     score_10, score_reasons + [detail], now)
                         return self._reject("nearby structure blocks target", u.name, detail)
@@ -1619,7 +1655,7 @@ class Scanner:
         valid_structure, structure_reason, structure_metrics = validate_entry_candidate(
             entry_candidate, entry_bar, spot, a5,
             cfg.LIVE_MAX_ADVERSE_ATR, cfg.LIVE_MAX_RUNAWAY_ATR,
-            structural_stop=lv.get("und_sl"), target=lv.get("und_t1"), min_rr=cfg.MIN_RR_T1)
+            structural_stop=lv.get("und_sl"), target=lv.get("und_t1"), min_rr=required_rr)
         if not valid_structure:
             self._watch(u.name, side_hint, entry_bar.ts, c["ps"], "INVALIDATED",
                         score_10, score_reasons + [structure_reason], now)

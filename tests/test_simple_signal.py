@@ -35,6 +35,10 @@ class TestDefaults(unittest.TestCase):
     def test_shipped_defaults(self):
         self.assertEqual(cfg.STRATEGY_MODE, "SIMPLE")
         self.assertEqual(cfg.SIMPLE_ADX_MIN, 25.0)
+        self.assertEqual((cfg.SIMPLE_RSI_CALL_MIN, cfg.SIMPLE_RSI_CALL_MAX), (52.0, 68.0))
+        self.assertEqual((cfg.SIMPLE_RSI_PUT_MIN, cfg.SIMPLE_RSI_PUT_MAX), (32.0, 48.0))
+        self.assertEqual(cfg.SIMPLE_MAX_EXTENSION_ATR, 1.5)
+        self.assertEqual(cfg.SIMPLE_MIN_RR_T1, 1.5)
         self.assertFalse(cfg.LIVE_INTRABAR_ENABLED)
 
 
@@ -75,6 +79,14 @@ class TestSimpleRule(unittest.TestCase):
         self.assertEqual(r["side"], 0)
         self.assertIn("PUT:rsi", r["gate_failures"])
 
+
+    def test_opposing_15m_context_rejects_but_neutral_context_does_not_veto(self):
+        opposed = at_bar(1, 3, context_15m=-1)
+        self.assertEqual(opposed["side"], 0)
+        self.assertIn("CALL:15m_context_opposed", opposed["gate_failures"])
+        neutral = at_bar(1, 3, context_15m=0)
+        self.assertEqual(neutral["side"], 1, neutral["reason"])
+
     def test_vwap_side_is_a_gate(self):
         # Candle 7 of the fixture closes below VWAP while EMA9 > EMA21: no CALL.
         r = at_bar(1, 7)
@@ -88,9 +100,9 @@ class TestSimpleRule(unittest.TestCase):
         stale = at_bar(1, 5)
         self.assertEqual(stale["side"], 0)
         self.assertIn("CALL:not_fresh", stale["gate_failures"])
-        self.assertEqual(at_bar(1, 5, fresh_bars=10)["side"], 1)
+        self.assertEqual(at_bar(1, 5, fresh_bars=10, rsi_call_min=0.0, rsi_call_max=100.0, max_entry_extension_atr=99.0)["side"], 1)
         # Returns after a VWAP dip: a new, young setup.
-        r = at_bar(1, 9)
+        r = at_bar(1, 9, rsi_call_min=0.0, rsi_call_max=100.0, max_entry_extension_atr=99.0)
         self.assertEqual(r["side"], 1)
         self.assertEqual(r["metrics"]["bars_in_signal"], 1)
         self.assertTrue(any("VWAP" in t for t in r["metrics"]["trigger"]))
@@ -141,7 +153,7 @@ class TestScannerSimpleMode(unittest.TestCase):
             from strategies.price import invalidation_distance
             context = sc.live_context["NIFTY"]
             a5 = atr(context["allc"], 14)[-1]
-            raw_stop = invalidation_distance(side, context["session"], context["allc"], sig.spot, "TREND")
+            raw_stop = invalidation_distance(side, context["session"], context["allc"], sig.spot, "SIMPLE_TREND")
             expected_stop = max(raw_stop, cfg.SL_MIN_ATR * a5)
             self.assertAlmostEqual(abs(sig.spot - sig.und_sl), expected_stop, delta=0.02 * a5)
             self.assertEqual(1 if sig.und_t1 > sig.spot else -1, 1 if side == "CALL" else -1)

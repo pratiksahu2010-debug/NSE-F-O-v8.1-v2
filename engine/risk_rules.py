@@ -18,7 +18,7 @@ class RiskRules:
 
     @staticmethod
     def levels(ltp: float, delta: float, atr_val: float, tick: float, side: str, spot: float,
-               stop_dist: Optional[float] = None) -> Optional[dict]:
+               stop_dist: Optional[float] = None, min_target_rr: Optional[float] = None) -> Optional[dict]:
         """Build option-premium levels from one consistent underlying risk distance.
 
         A structural stop is never silently widened or narrowed to fit an ATR band.
@@ -57,7 +57,8 @@ class RiskRules:
         # delta-estimated loss is beyond the configured premium-risk ceiling.
         if premium_risk >= ltp * float(cfg.MAX_SL_PCT):
             return None
-        t1_d = max(float(cfg.T1_ATR) * atr_val, float(cfg.T1_R) * sl_d)
+        t1_d = max(float(cfg.T1_ATR) * atr_val, float(cfg.T1_R) * sl_d,
+                   max(0.0, float(min_target_rr or 0.0)) * sl_d)
         t2_d = max(float(cfg.T2_ATR) * atr_val, float(cfg.T2_R) * sl_d)
         sl = _round_tick(ltp - premium_risk, tick)
         t1 = _round_tick(ltp + d * t1_d, tick, up=True)
@@ -66,7 +67,7 @@ class RiskRules:
         if risk <= 0:
             return None
         rr1, rr2 = (t1 - ltp) / risk, (t2 - ltp) / risk
-        if rr1 < float(cfg.MIN_RR_T1):
+        if rr1 + 1e-9 < float(cfg.MIN_RR_T1):
             return None
         return {
             "sl": sl, "t1": t1, "t2": t2, "rr": rr2,

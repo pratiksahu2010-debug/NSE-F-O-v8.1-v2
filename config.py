@@ -95,14 +95,15 @@ class Config:
     # intrabar); kept only so old and new behaviour can be compared. Anything other than LEGACY means SIMPLE.
     STRATEGY_MODE = "LEGACY" if _env("STRATEGY_MODE", "SIMPLE").strip().upper() == "LEGACY" else "SIMPLE"
     SIMPLE_ADX_MIN = _env("SIMPLE_ADX_MIN", 25.0, float)               # trend must be real: ADX(14) at or above this
-    SIMPLE_RSI_CALL_MIN = _env("SIMPLE_RSI_CALL_MIN", 55.0, float)     # CALL: RSI at or above ...
-    SIMPLE_RSI_CALL_MAX = _env("SIMPLE_RSI_CALL_MAX", 75.0, float)     # ... but not an overbought spike
-    SIMPLE_RSI_PUT_MAX = _env("SIMPLE_RSI_PUT_MAX", 45.0, float)       # PUT: RSI at or below ...
-    SIMPLE_RSI_PUT_MIN = _env("SIMPLE_RSI_PUT_MIN", 25.0, float)       # ... but not an oversold flush
+    SIMPLE_RSI_CALL_MIN = _env("SIMPLE_RSI_CALL_MIN", 52.0, float)     # CALL: RSI at or above ...
+    SIMPLE_RSI_CALL_MAX = _env("SIMPLE_RSI_CALL_MAX", 68.0, float)     # ... but not an overbought spike
+    SIMPLE_RSI_PUT_MAX = _env("SIMPLE_RSI_PUT_MAX", 48.0, float)       # PUT: RSI at or below ...
+    SIMPLE_RSI_PUT_MIN = _env("SIMPLE_RSI_PUT_MIN", 32.0, float)       # ... but not an oversold flush
     SIMPLE_FRESH_BARS = _env("SIMPLE_FRESH_BARS", 3, int)              # fire only while the setup is at most this many candles old
-    SIMPLE_MAX_EXTENSION_ATR = _env("SIMPLE_MAX_EXTENSION_ATR", 1.8, float)  # reject chasing >1.8 ATR from EMA9
+    SIMPLE_MAX_EXTENSION_ATR = _env("SIMPLE_MAX_EXTENSION_ATR", 1.5, float)  # reject chasing >1.5 ATR from EMA9
     SIMPLE_MIN_BARS = _env("SIMPLE_MIN_BARS", 35, int)                 # candles of history before the indicators are trusted (ADX needs 29 + the freshness window)
     SIMPLE_MIN_SESSION_BARS = _env("SIMPLE_MIN_SESSION_BARS", 3, int)  # closed candles today before VWAP is trusted (first scan 09:30)
+    SIMPLE_MIN_RR_T1 = _env("SIMPLE_MIN_RR_T1", 1.5, float)  # Normal/SIMPLE first target must retain at least 1.5R after structure
     # Underlying ticks feed a separate partial-candle detector. SIMPLE uses the same EMA/VWAP/RSI/ADX rules
     # on the live partial bar; LEGACY retains its independent intrabar Normal/MEX/ORB detectors.
     LIVE_INTRABAR_ENABLED = _env("LIVE_INTRABAR_ENABLED", False, _bool)
