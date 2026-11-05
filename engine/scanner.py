@@ -1,4 +1,5 @@
 """Three-stage funnel: (1) cheap spot scan -> (2) OI/chain enrichment -> (3) score, pick contract, risk, alert."""
+import hashlib
 import logging
 import math
 import threading
@@ -308,10 +309,29 @@ class Scanner:
             log.exception("candle archive failed for %s", name)
 
     def _reject(self, why: str, name: str = "", detail: str = ""):
-        """Count and retain the rejection reason at aggregate and per-symbol levels."""
-        key = why.split(":")[0].split(" (")[0][:40]
+        """Count and retain a rejected candidate in diagnostics and durable daily history."""
+        key = why.split(":")[0].split(" (")[0][:80]
         self._rej[key] = self._rej.get(key, 0) + 1
         self._note_symbol(name, "stage2/3", why, detail)
+        if name:
+            try:
+                recorder = getattr(self.db, "record_rejection", None)
+                if callable(recorder):
+                    now = datetime.now(IST)
+                    ts = now.isoformat(timespec="seconds")
+                    cycle = str(getattr(self, "last_cycle_started_at", None) or ts)
+                    side = ""
+                    for candidate_side in ("CALL", "PUT"):
+                        candidate = getattr(self, "candidate_watchlist", {}).get(f"{name}:{candidate_side}", {})
+                        if candidate.get("status") in {"CONFIRMED", "INVALIDATED", "NEAR_THRESHOLD"}:
+                            side = candidate_side
+                    event_id = hashlib.sha256(
+                        f"{cycle}|{name}|{side}|{key}|{detail}".encode("utf-8")
+                    ).hexdigest()
+                    recorder(event_id, ts, now.date().isoformat(), name, side, "stage2/3", key, detail)
+            except Exception:
+                # Rejection analytics must never interrupt the live signal pipeline.
+                log.exception("could not persist rejected candidate | symbol=%s | reason=%s", name, key)
         log.info("skip %s: %s %s", name, why, detail)
         return None
 
