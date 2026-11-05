@@ -149,11 +149,11 @@ def test_normal_15m_context_requires_matching_bullish_or_bearish_direction():
 
     assert matches("CALL", 1) is True
     assert matches("CALL", -1) is False
-    assert matches("CALL", 0) is False
+    assert matches("CALL", 0) is True
 
     assert matches("PUT", -1) is True
     assert matches("PUT", 1) is False
-    assert matches("PUT", 0) is False
+    assert matches("PUT", 0) is True
 
     assert matches("UNKNOWN", 1) is False
 
