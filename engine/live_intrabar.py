@@ -232,8 +232,8 @@ class LiveIntrabarEngine:
             compression = median(base_ranges) / max(broad_median, 1e-9) if base_ranges else 1.0
             compressed = compression <= float(getattr(cfg, "MEX_COMPRESSION_MAX", 0.90))
             range_exp = rng / max(base_range, 1e-9)
-            min_range_ratio = float(getattr(cfg, "MEX_MIN_RANGE_RATIO", 1.8))
-            min_impulse = float(getattr(cfg, "MEX_MIN_IMPULSE_ATR", 0.65))
+            min_range_ratio = float(getattr(cfg, "MEX_MIN_RANGE_RATIO", 1.5))
+            min_impulse = float(getattr(cfg, "MEX_MIN_IMPULSE_ATR", 0.45))
             close_threshold = float(getattr(cfg, "MEX_CLOSE_POS", 0.75))
             extension_max = float(getattr(cfg, "MEX_MAX_EXTENSION_ATR", 1.8))
             _, _, hist = macd(closes, 12, 26, 9)
