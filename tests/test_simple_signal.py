@@ -1,6 +1,6 @@
 """SIMPLE mode: EMA 9/21 + session VWAP + RSI(14) + ADX(14) >= threshold, end to end.
 
-This file runs against the shipped defaults (see tests/conftest.py): STRATEGY_MODE=SIMPLE, intrabar off.
+This file runs against the shipped defaults (see tests/conftest.py): STRATEGY_MODE=SIMPLE, live intrabar on.
 """
 import os
 import random
@@ -39,7 +39,7 @@ class TestDefaults(unittest.TestCase):
         self.assertEqual((cfg.SIMPLE_RSI_PUT_MIN, cfg.SIMPLE_RSI_PUT_MAX), (32.0, 48.0))
         self.assertEqual(cfg.SIMPLE_MAX_EXTENSION_ATR, 1.5)
         self.assertEqual(cfg.SIMPLE_MIN_RR_T1, 1.5)
-        self.assertFalse(cfg.LIVE_INTRABAR_ENABLED)
+        self.assertTrue(cfg.LIVE_INTRABAR_ENABLED)
 
 
 class TestSimpleRule(unittest.TestCase):
@@ -207,11 +207,11 @@ class TestScannerSimpleMode(unittest.TestCase):
         self.assertEqual(sc.run_once(now), [])
         self.assertIn("stale option chain", sc.last_stats["rejects"])
 
-    def test_intrabar_path_is_off_by_default(self):
+    def test_intrabar_path_is_enabled_by_default(self):
         sc, _, _, _, _ = build(1)
         sc.live_engine = MagicMock()
         sc.ingest_live_tick("NSE_INDEX|Nifty 50", MagicMock(ltp=25000.0, volume=0.0), time.time())
-        sc.live_engine.update.assert_not_called()
+        sc.live_engine.update.assert_called_once()
 
 
 class TestDataHealthAlert(unittest.TestCase):

@@ -123,7 +123,16 @@ class LiveIntrabarEngine:
                allow_mex: bool = True, allow_orb: bool = True,
                allow_simple: bool = False) -> Optional[dict]:
         """Return one early trigger contract, or None. No partial bar enters closed history."""
-        if len(completed_all) < max(30, int(getattr(cfg, "V7_MIN_BARS", 50))):
+        # SIMPLE needs SIMPLE_MIN_BARS (35 by default), not the legacy V7
+        # history floor (50). The old shared check delayed valid SIMPLE live
+        # entries by three 5m candles despite sufficient indicator history.
+        if allow_sequential:
+            required_history = max(30, int(getattr(cfg, "V7_MIN_BARS", 50)))
+        elif allow_simple:
+            required_history = max(30, int(getattr(cfg, "SIMPLE_MIN_BARS", 35)))
+        else:
+            required_history = 35  # MEX/ORB indicator warm-up
+        if len(completed_all) < required_history:
             return None
         if not completed_session or partial.ts.date() != now.date():
             return None
@@ -327,6 +336,28 @@ class LiveIntrabarEngine:
                 max_entry_extension_atr=float(getattr(cfg, "SIMPLE_MAX_EXTENSION_ATR", 1.5)),
                 context_15m=htf_bias(completed_all, cfg.HTF_MINUTES),
             )
+            # Surface SIMPLE live-trigger activity in the same diagnostics
+            # snapshot as the legacy Normal detector. Otherwise live SIMPLE
+            # could be evaluating every tick while its diagnostic counters stay zero.
+            with self._lock:
+                stats = self._normal_stats
+                stats["evaluated"] += 1
+                if simple_result.get("side") in (1, -1):
+                    stats["detected"] += 1
+                    setup_name = str(simple_result.get("setup_type") or "SIMPLE_TREND")
+                    stats["setups"][setup_name] = stats["setups"].get(setup_name, 0) + 1
+                else:
+                    stats["no_trigger"] += 1
+                    for gate in simple_result.get("gate_failures", []):
+                        stats["gate_failures"][gate] = stats["gate_failures"].get(gate, 0) + 1
+                stats["latest"][und.name] = {
+                    "reason": simple_result.get("reason", ""),
+                    "setup_type": simple_result.get("setup_type") or "SIMPLE_TREND",
+                    "gate_failures": list(simple_result.get("gate_failures", [])),
+                    "metrics": dict(simple_result.get("metrics") or {}),
+                }
+                if len(stats["latest"]) > 100:
+                    stats["latest"].pop(next(iter(stats["latest"])))
             if simple_result.get("side") in (1, -1):
                 side = "CALL" if simple_result["side"] > 0 else "PUT"
                 strategy = "SIMPLE_TREND"

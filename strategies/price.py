@@ -307,7 +307,8 @@ def price_score(votes: List[Vote]) -> float:
     return _clamp(sum(v.score for v in votes))
 
 
-def invalidation_distance(side: str, session: List[Candle], allc: List[Candle], spot: float, kind: str = "TREND") -> float:
+def invalidation_distance(side: str, session: List[Candle], allc: List[Candle], spot: float,
+                          kind: str = "TREND", trigger_bar: Optional[Candle] = None) -> float:
     """Return the raw underlying distance to a setup-specific invalidation level.
 
     The stop is placed beyond the structure that created the signal. Distances are
@@ -350,7 +351,13 @@ def invalidation_distance(side: str, session: List[Candle], allc: List[Candle], 
         if not swing:
             swing = recent
         swing_level = min(float(c.l) for c in swing) if sgn > 0 else max(float(c.h) for c in swing)
-        trigger_level = float(allc[-1].l if sgn > 0 else allc[-1].h)
+        # For a live intrabar entry, include the actual partial trigger-bar
+        # extreme as well as the last completed candle's extreme.
+        trigger_level = float(
+            (trigger_bar.l if sgn > 0 else trigger_bar.h)
+            if trigger_bar is not None else
+            (allc[-1].l if sgn > 0 else allc[-1].h)
+        )
         e9_values = ema([c.c for c in allc], cfg.EMA_FAST)
         vw_values = vwap(session)
         candidates = [float(x) for x in (

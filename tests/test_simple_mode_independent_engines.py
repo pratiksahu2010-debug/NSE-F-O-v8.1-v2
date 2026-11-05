@@ -48,7 +48,7 @@ def _stage1_scanner(symbol, simple_candidate):
 def test_simple_mode_runs_mex_and_orb_without_changing_simple_normal_route():
     now = datetime(2026, 11, 5, 10, 0, tzinfo=IST)
     candle = Candle(now - timedelta(minutes=5), 100, 102, 99, 101, 1000, 0)
-    symbol = Underlying("ABC", "STOCK", "NSE_EQ|ABC")
+    symbol = Underlying("RELIANCE", "STOCK", "NSE_EQ|RELIANCE")
     simple_candidate = {
         "ps": 1.0,
         "votes": [Vote("SIMPLE_TREND", 1.0, "existing SIMPLE rule")],
@@ -72,14 +72,15 @@ def test_simple_mode_runs_mex_and_orb_without_changing_simple_normal_route():
     assert candidates[0]["entry_candidate"]["strategy"] == "SIMPLE_TREND"
 
 
-def test_simple_mode_live_dispatch_keeps_mex_and_orb_but_not_legacy_normal():
+def test_simple_mode_live_dispatch_respects_normal_universe_and_keeps_mex_orb():
     scanner = scanner_module.Scanner.__new__(scanner_module.Scanner)
     symbol = Underlying("ABC", "STOCK", "NSE_EQ|ABC")
-    scanner.mex = SimpleNamespace(universe={"ABC"})
-    scanner.momentum_orb = SimpleNamespace(universe={"ABC"})
+    normal_symbol = Underlying("RELIANCE", "STOCK", "NSE_EQ|RELIANCE")
+    scanner.mex = SimpleNamespace(universe={"ABC", "RELIANCE"})
+    scanner.momentum_orb = SimpleNamespace(universe={"ABC", "RELIANCE"})
     scanner.live_engine = Mock()
     scanner.live_engine.detect.return_value = None
-    scanner._live_symbol_locks = {"ABC": threading.RLock()}
+    scanner._live_symbol_locks = {"ABC": threading.RLock(), "RELIANCE": threading.RLock()}
     scanner._live_state_lock = threading.Lock()
     scanner._live_inflight = set()
     scanner._closed = False
@@ -89,13 +90,16 @@ def test_simple_mode_live_dispatch_keeps_mex_and_orb_but_not_legacy_normal():
 
     with patch.object(scanner_module.cfg, "STRATEGY_MODE", "SIMPLE"):
         scanner._detect_live_candidate(symbol, partial, now, cached)
+        scanner._detect_live_candidate(normal_symbol, partial, now, cached)
 
-    scanner.live_engine.detect.assert_called_once()
-    kwargs = scanner.live_engine.detect.call_args.kwargs
-    assert kwargs["allow_sequential"] is False
-    assert kwargs["allow_simple"] is True
-    assert kwargs["allow_mex"] is True
-    assert kwargs["allow_orb"] is True
+    assert scanner.live_engine.detect.call_count == 2
+    outside_kwargs = scanner.live_engine.detect.call_args_list[0].kwargs
+    normal_kwargs = scanner.live_engine.detect.call_args_list[1].kwargs
+    assert outside_kwargs["allow_sequential"] is False
+    assert outside_kwargs["allow_simple"] is False
+    assert outside_kwargs["allow_mex"] is True
+    assert outside_kwargs["allow_orb"] is True
+    assert normal_kwargs["allow_simple"] is True
 
 
 def test_signal_alert_requires_all_chat_acknowledgements():
@@ -223,3 +227,51 @@ def test_nearest_structure_obstacle_detects_repeated_resistance_and_support():
 
     assert nearest_structure_obstacle("CALL", candles, 105.0) == 110.0
     assert nearest_structure_obstacle("PUT", candles, 95.0) == 90.0
+
+
+def test_simple_mode_skips_normal_detector_outside_fixed_universe():
+    now = datetime(2026, 11, 5, 10, 0, tzinfo=IST)
+    candle = Candle(now - timedelta(minutes=5), 100, 102, 99, 101, 1000, 0)
+    symbol = Underlying("ABC", "STOCK", "NSE_EQ|ABC")
+    scanner = _stage1_scanner(symbol, None)
+
+    with (
+        patch.object(scanner_module.cfg, "STRATEGY_MODE", "SIMPLE"),
+        patch.object(scanner_module.events, "symbol_event", return_value=False),
+        patch.object(scanner_module, "_stage1_fetch_results",
+                     return_value=iter([(symbol, ([candle], None), None)])),
+    ):
+        candidates, hits = scanner.stage1(now)
+
+    scanner._simple_candidate.assert_not_called()
+    scanner.mex.scan.assert_called_once()
+    scanner.momentum_orb.scan.assert_called_once()
+    assert candidates == []
+    assert hits == 0
+
+
+def test_simple_structural_stop_includes_live_trigger_bar_extreme():
+    from strategies import price
+
+    now = datetime(2026, 11, 5, 12, 0, tzinfo=IST)
+    candles = [
+        Candle(now - timedelta(minutes=5 * (39 - i)),
+               100.0, 102.0, 98.0, 100.0, 1000, 0)
+        for i in range(40)
+    ]
+    live_call = Candle(now, 120.0, 120.5, 119.0, 120.2, 100, 0)
+    live_put = Candle(now, 80.0, 81.0, 79.5, 80.2, 100, 0)
+
+    with (
+        patch.object(price, "atr", return_value=[1.0] * 40),
+        patch.object(price, "ema", return_value=[110.0] * 40),
+        patch.object(price, "vwap", return_value=[105.0] * 40),
+    ):
+        call_distance = price.invalidation_distance(
+            "CALL", candles, candles, 120.0, "SIMPLE_TREND", trigger_bar=live_call)
+        put_distance = price.invalidation_distance(
+            "PUT", candles, candles, 80.0, "SIMPLE_TREND", trigger_bar=live_put)
+
+    # STOP_BUFFER_ATR (0.25) is added beyond the selected live wick.
+    assert call_distance == 1.25
+    assert put_distance == 1.25

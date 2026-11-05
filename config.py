@@ -106,7 +106,7 @@ class Config:
     SIMPLE_MIN_RR_T1 = _env("SIMPLE_MIN_RR_T1", 1.5, float)  # Normal/SIMPLE first target must retain at least 1.5R after structure
     # Underlying ticks feed a separate partial-candle detector. SIMPLE uses the same EMA/VWAP/RSI/ADX rules
     # on the live partial bar; LEGACY retains its independent intrabar Normal/MEX/ORB detectors.
-    LIVE_INTRABAR_ENABLED = _env("LIVE_INTRABAR_ENABLED", False, _bool)
+    LIVE_INTRABAR_ENABLED = _env("LIVE_INTRABAR_ENABLED", True, _bool)
     # V8.1 - the scan runs SCAN_DELAY_SEC after the candle boundary. If the provider has not published the just-closed
     # candle yet, the symbol used to be discarded as "stale" and that candle was never evaluated. Now the scanner waits
     # briefly for it (shared across all workers, so a slow feed costs one short wait per scan, not one per symbol).

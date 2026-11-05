@@ -443,7 +443,10 @@ class Scanner:
             # the separate Normal detector. MEX and ORB remain independent.
             allow_sequential = (cfg.STRATEGY_MODE == "LEGACY" and
                                 (und.kind == "INDEX" or und.name in NORMAL_SYMBOL_SET))
-            allow_simple = cfg.STRATEGY_MODE != "LEGACY"
+            # The configured Normal universe is independent from the wider MEX/ORB
+            # stock universes. Index underlyings remain eligible for Normal.
+            allow_simple = (cfg.STRATEGY_MODE != "LEGACY" and
+                            (und.kind == "INDEX" or und.name in NORMAL_SYMBOL_SET))
             allow_mex = und.name in self.mex.universe
             allow_orb = und.name in self.momentum_orb.universe
             candidate = self.live_engine.detect(und, cached["session"], cached["allc"], partial, now, cfg,
@@ -508,7 +511,8 @@ class Scanner:
             score = 0.82 if strategy in ("MOMENTUM_ORB", "MOMENTUM_EXPLOSION") else 1.0
             vote_name = {"MOMENTUM_ORB": "MOMENTUM_ORB",
                          "MOMENTUM_EXPLOSION": "MOMENTUM_EXPLOSION",
-                         "V7_SEQUENTIAL": "V7_SEQUENTIAL", "NORMAL_TREND": "NORMAL_TREND"}[strategy]
+                         "V7_SEQUENTIAL": "V7_SEQUENTIAL", "NORMAL_TREND": "NORMAL_TREND",
+                         "SIMPLE_TREND": "SIMPLE_TREND"}[strategy]
             vote = Vote(vote_name, side_sign * score, candidate["reason"])
             v7_decision = None
             if strategy == "V7_SEQUENTIAL":
@@ -537,7 +541,9 @@ class Scanner:
                 self._reject("option chain pending", und.name, "async refresh scheduled; no blocking REST call")
                 return
             fut = list(item["fut"])
-            sig = self._evaluate(item, [], now, (expiry, (chain, fut)))
+            # This worker already owns the per-symbol lock; call the locked implementation
+            # directly instead of _evaluate(), which would try to acquire the same lock again.
+            sig = self._evaluate_locked(item, [], now, (expiry, (chain, fut)))
             if sig:
                 self.live_engine.mark_sent(key)
                 log.info("LIVE INTRABAR SIGNAL %s %s %s", und.name, candidate["side"], strategy)
@@ -800,24 +806,36 @@ class Scanner:
             # Keep the configured Normal engine exactly as selected, then run
             # MEX and ORB independently for their own universes in BOTH modes.
             if cfg.STRATEGY_MODE != "LEGACY":
-                try:
-                    simple_cand = self._simple_candidate(u, session, allc, fut, now, counts, context_15m=htf_bias(allc, cfg.HTF_MINUTES))
-                except Exception as exc:       # one bad symbol must never abort the whole scan
-                    counts["evaluation_errors"] += 1
-                    self._note_symbol(u.name, "stage1", "simple rule evaluation error",
-                                      f"{type(exc).__name__}: {exc}"[:160])
-                    log.exception("simple rule evaluation failed | symbol=%s", u.name)
-                    simple_cand = None
-                simple_diag = self.normal_trend_diagnostics.get("latest", {}).get(u.name, {})
-                normal_result = {
-                    "side": int(simple_cand.get("ps") or 0) if simple_cand else 0,
-                    "score": abs(float(simple_cand.get("ps") or 0.0)) if simple_cand else 0.0,
-                    "setup_type": simple_diag.get("setup_type") or "SIMPLE_TREND",
-                    "reason": simple_diag.get("reason", "no simple trigger"),
-                    "metrics": dict(simple_diag.get("metrics") or {}),
-                    "gate_results": {},
-                    "gate_failures": list(simple_diag.get("gate_failures") or []),
-                }
+                normal_eligible = u.kind == "INDEX" or u.name in NORMAL_SYMBOL_SET
+                if normal_eligible:
+                    try:
+                        simple_cand = self._simple_candidate(
+                            u, session, allc, fut, now, counts,
+                            context_15m=htf_bias(allc, cfg.HTF_MINUTES))
+                    except Exception as exc:       # one bad symbol must never abort the whole scan
+                        counts["evaluation_errors"] += 1
+                        self._note_symbol(u.name, "stage1", "simple rule evaluation error",
+                                          f"{type(exc).__name__}: {exc}"[:160])
+                        log.exception("simple rule evaluation failed | symbol=%s", u.name)
+                        simple_cand = None
+                    simple_diag = self.normal_trend_diagnostics.get("latest", {}).get(u.name, {})
+                    normal_result = {
+                        "side": int(simple_cand.get("ps") or 0) if simple_cand else 0,
+                        "score": abs(float(simple_cand.get("ps") or 0.0)) if simple_cand else 0.0,
+                        "setup_type": simple_diag.get("setup_type") or "SIMPLE_TREND",
+                        "reason": simple_diag.get("reason", "no simple trigger"),
+                        "metrics": dict(simple_diag.get("metrics") or {}),
+                        "gate_results": {},
+                        "gate_failures": list(simple_diag.get("gate_failures") or []),
+                    }
+                else:
+                    # Do not silently expand Normal beyond its configured fixed list.
+                    # MEX and ORB still run below on their own independent universes.
+                    normal_result = {
+                        "side": 0, "score": 0.0, "setup_type": None,
+                        "reason": "outside normal universe", "metrics": {},
+                        "gate_results": {}, "gate_failures": ["outside_normal_universe"],
+                    }
             else:
                 # Legacy Normal Trend indicator implementation is untouched.
                 normal_eligible = u.kind == "INDEX" or u.name in NORMAL_SYMBOL_SET
@@ -1612,7 +1630,8 @@ class Scanner:
         # the legacy trend path (EMA9, session VWAP, or trigger-candle extreme).
         # RiskRules still rejects stops outside its permitted ATR envelope.
         required_rr = max(float(cfg.MIN_RR_T1), float(getattr(cfg, "SIMPLE_MIN_RR_T1", 1.5))) if is_simple else float(cfg.MIN_RR_T1)
-        stop_dist = invalidation_distance(side, c["session"], c["allc"], spot, strategy)
+        stop_dist = invalidation_distance(side, c["session"], c["allc"], spot, strategy,
+                                           trigger_bar=entry_bar if is_simple else None)
         lv = self.risk.levels(px, q.delta, a5, contract.tick_size, side, spot, stop_dist,
                               min_target_rr=required_rr if is_simple else None)
         if not lv or float(lv.get("rr", 0.0)) < float(cfg.MIN_RR_T1):
