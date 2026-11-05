@@ -94,3 +94,49 @@ def test_simple_mode_live_dispatch_keeps_mex_and_orb_but_not_legacy_normal():
     assert kwargs["allow_sequential"] is False
     assert kwargs["allow_mex"] is True
     assert kwargs["allow_orb"] is True
+
+
+def test_signal_alert_requires_all_chat_acknowledgements():
+    from models import Signal
+
+    scanner = scanner_module.Scanner.__new__(scanner_module.Scanner)
+    scanner.tg = SimpleNamespace(chat_ids=["chat-one", "chat-two"])
+    scanner.db = Mock()
+    scanner.db.telegram_delivery_status.return_value = {
+        "total": 2, "delivered": 2, "pending": 0, "all_delivered": True
+    }
+    scanner._note_symbol = Mock()
+    scanner._deliver_pending_outbox = Mock()
+    scanner._mark_alerted = Mock()
+    scanner._watch = Mock()
+    now = datetime(2026, 11, 5, 10, 5, tzinfo=IST)
+    signal = Signal(id="ABC-20261105T100000-C", ts="2026-11-05T10:00:00+05:30",
+                    underlying="ABC", side="CALL", confidence=8.0)
+
+    delivered = scanner._queue_signal_alert(signal, "dedupe-key", "alert body", now)
+
+    assert delivered is True
+    assert scanner.db.enqueue_telegram.call_count == 2
+    scanner._deliver_pending_outbox.assert_called_once()
+    scanner._mark_alerted.assert_called_once_with("dedupe-key")
+    scanner._watch.assert_called_once()
+
+
+def test_signal_alert_reports_outbox_enqueue_failure():
+    from models import Signal
+
+    scanner = scanner_module.Scanner.__new__(scanner_module.Scanner)
+    scanner.tg = SimpleNamespace(chat_ids=["chat-one"])
+    scanner.db = Mock()
+    scanner.db.enqueue_telegram.side_effect = RuntimeError("database unavailable")
+    scanner._note_symbol = Mock()
+    scanner._deliver_pending_outbox = Mock()
+    now = datetime(2026, 11, 5, 10, 5, tzinfo=IST)
+    signal = Signal(id="ABC-20261105T100000-C", ts="2026-11-05T10:00:00+05:30",
+                    underlying="ABC", side="CALL", confidence=8.0)
+
+    delivered = scanner._queue_signal_alert(signal, "dedupe-key", "alert body", now)
+
+    assert delivered is False
+    scanner._note_symbol.assert_called_once()
+    scanner._deliver_pending_outbox.assert_not_called()
