@@ -2,6 +2,7 @@
 import os
 import sys
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ["DB_PATH"] = ":memory:"
@@ -50,7 +51,7 @@ class TestMomentumExplosion(unittest.TestCase):
             self.assertEqual(set(details["gate_results"]), {
                 "fresh_boundary_break", "strong_close", "not_overextended",
                 "minimum_directional_impulse", "macd_turn_or_directional_alignment",
-                "compression_or_range_expansion",
+                "minimum_range_expansion",
             })
 
     def test_missing_relative_volume_is_diagnostic_not_a_hard_gate(self):
@@ -60,6 +61,25 @@ class TestMomentumExplosion(unittest.TestCase):
         points, reason, details = score_momentum_explosion(1, session, history + session)
         self.assertGreater(points, 0.0, reason)
         self.assertIsNone(details.get("relative_volume"))
+
+    def test_macd_is_supporting_not_a_hard_gate(self):
+        allc, price = [], 25000.0
+        start = datetime(2026, 10, 15, 9, 15, tzinfo=IST)
+        for i in range(45):
+            step = 0.5 if i % 2 == 0 else -0.25
+            o, close = price, price + step
+            allc.append(Candle(start + timedelta(minutes=5 * i), o,
+                               max(o, close) + 0.7, min(o, close) - 0.7,
+                               close, 1000))
+            price = close
+        allc.append(Candle(start + timedelta(minutes=5 * len(allc)), price,
+                           price + 3.3, price - 0.3, price + 3.0, 3000))
+        # Deliberately bearish/weak MACD while price impulse and expansion are bullish.
+        with patch("strategies.momentum_explosion.macd", return_value=([], [], [-1.0, -2.0])):
+            points, reason, details = score_momentum_explosion(1, allc[-20:], allc)
+        self.assertGreater(points, 0.0, reason)
+        self.assertFalse(details["macd_supporting"])
+        self.assertNotIn("macd", details["gate_results"])
 
     def test_both_directions_are_evaluated_without_crashing(self):
         for sign in (1, -1):
