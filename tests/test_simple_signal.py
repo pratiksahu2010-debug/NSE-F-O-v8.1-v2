@@ -35,6 +35,10 @@ class TestDefaults(unittest.TestCase):
     def test_shipped_defaults(self):
         self.assertEqual(cfg.STRATEGY_MODE, "SIMPLE")
         self.assertEqual(cfg.SIMPLE_ADX_MIN, 25.0)
+        self.assertEqual((cfg.SIMPLE_RSI_CALL_MIN, cfg.SIMPLE_RSI_CALL_MAX), (52.0, 68.0))
+        self.assertEqual((cfg.SIMPLE_RSI_PUT_MIN, cfg.SIMPLE_RSI_PUT_MAX), (32.0, 48.0))
+        self.assertEqual(cfg.SIMPLE_MAX_EXTENSION_ATR, 1.5)
+        self.assertEqual(cfg.SIMPLE_MIN_RR_T1, 1.5)
         self.assertFalse(cfg.LIVE_INTRABAR_ENABLED)
 
 
@@ -141,7 +145,7 @@ class TestScannerSimpleMode(unittest.TestCase):
             from strategies.price import invalidation_distance
             context = sc.live_context["NIFTY"]
             a5 = atr(context["allc"], 14)[-1]
-            raw_stop = invalidation_distance(side, context["session"], context["allc"], sig.spot, "TREND")
+            raw_stop = invalidation_distance(side, context["session"], context["allc"], sig.spot, "SIMPLE_TREND")
             expected_stop = max(raw_stop, cfg.SL_MIN_ATR * a5)
             self.assertAlmostEqual(abs(sig.spot - sig.und_sl), expected_stop, delta=0.02 * a5)
             self.assertEqual(1 if sig.und_t1 > sig.spot else -1, 1 if side == "CALL" else -1)
