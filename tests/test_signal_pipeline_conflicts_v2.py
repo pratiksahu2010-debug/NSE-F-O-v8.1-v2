@@ -10,7 +10,8 @@ def snapshot(n=220):
     start = datetime(2026, 11, 4, 9, 15, tzinfo=timezone.utc)
     bars = tuple(Candle(start + timedelta(minutes=5*i), 100, 101, 99, 100.5, 1000, True)
                  for i in range(n))
-    return MarketSnapshot("NIFTY", "INDEX", "5m", bars[-1], bars)
+    return MarketSnapshot("NIFTY", "INDEX", "5m", bars[-1], bars,
+                          indicators={"adx_14": 25.0, "ema_21": 100.0, "atr_14": 1.0})
 
 
 def candidate(side, score=80, state=CandleState.CLOSED, strategy="TEST"):
