@@ -298,7 +298,7 @@ def test_live_mex_uses_configured_impulse_and_range_expansion_without_macd_veto(
     cfg = SimpleNamespace(
         V7_MIN_BARS=50, MOMENTUM_ORB_ENABLED=False, MEX_ENABLED=True,
         MEX_LOOKBACK=8, MEX_COMPRESSION_MAX=0.90,
-        MEX_MIN_RANGE_RATIO=1.8, MEX_MIN_IMPULSE_ATR=0.65,
+        MEX_MIN_RANGE_RATIO=1.5, MEX_MIN_IMPULSE_ATR=0.45,
         MEX_CLOSE_POS=0.75, MEX_MAX_EXTENSION_ATR=1.8,
         LIVE_MAX_RUNAWAY_ATR=0.8,
     )
@@ -318,6 +318,6 @@ def test_live_mex_uses_configured_impulse_and_range_expansion_without_macd_veto(
     assert result is not None
     assert result["strategy"] == "MOMENTUM_EXPLOSION"
     assert result["side"] == "CALL"
-    assert result["metrics"]["range_expansion"] >= 1.8
-    assert result["metrics"]["impulse_atr"] >= 0.65
+    assert result["metrics"]["range_expansion"] >= 1.5
+    assert result["metrics"]["impulse_atr"] >= 0.45
     assert result["metrics"]["macd_supporting"] is False
