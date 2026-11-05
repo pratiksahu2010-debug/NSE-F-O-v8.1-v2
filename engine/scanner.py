@@ -444,6 +444,55 @@ class Scanner:
 
     def _detect_live_candidate(self, und, partial, now, cached):
         try:
+            if cfg.V2_ENGINE_ENABLED:
+                volume_map = {bar.ts: bar.v for bar in (cached.get("fut") or [])}
+                decisions = evaluate_legacy_candles(
+                    self.v2_engine, und.name, und.kind, "5m", cached["allc"],
+                    live_candle=partial, futures_volume_by_timestamp=volume_map,
+                    session_candles=cached["session"],
+                    metadata={"market_bias": self.mkt_bias, "group": und.group,
+                              "provider": getattr(self.fo, "active_name", "UPSTOX")},
+                )
+                early = [d for d in decisions if d.state is V2DecisionState.EARLY]
+                if not early:
+                    return
+                decision = max(early, key=lambda d: (d.candidate.score,
+                                                     -d.candidate.strategy_priority))
+                v2c = decision.candidate
+                side = v2c.side.value
+                entry = {
+                    "symbol": und.name, "strategy": v2c.strategy, "side": side,
+                    "mode": "INTRABAR", "setup_time": v2c.candle_timestamp.isoformat(),
+                    "trigger_time": v2c.candle_timestamp.isoformat(),
+                    "confirmation_time": now.isoformat(),
+                    "confirmation_price": float(v2c.entry), "timeframe": "5m-intrabar",
+                    "setup_id": v2c.setup_id,
+                }
+                candidate = {
+                    "strategy": "V2_ENGINE", "side": side,
+                    "reason": "; ".join(v2c.reasons) or v2c.strategy,
+                    "setup_id": v2c.setup_id, "confirmation_time": now.isoformat(),
+                    "bar": partial, "metrics": dict(v2c.metadata),
+                    "v2_candidate": v2c, "v2_decision": decision,
+                    "entry_candidate": entry,
+                }
+                key = candidate["setup_id"]
+                with self._live_state_lock:
+                    if key in self._live_inflight:
+                        return
+                    self._live_inflight.add(key)
+                try:
+                    if getattr(self, "_closed", False):
+                        with self._live_state_lock:
+                            self._live_inflight.discard(key)
+                        return
+                    self.live_pool.submit(self._evaluate_live_candidate, und, candidate, cached)
+                except RuntimeError:
+                    with self._live_state_lock:
+                        self._live_inflight.discard(key)
+                    if not getattr(self, "_closed", False):
+                        log.exception("v2 live candidate dispatch unavailable for %s", und.name)
+                return
             # SIMPLE uses its own EMA/VWAP/RSI/ADX live trigger; LEGACY keeps
             # the separate Normal detector. MEX and ORB remain independent.
             allow_sequential = (cfg.STRATEGY_MODE == "LEGACY" and
@@ -513,11 +562,13 @@ class Scanner:
             completed_all = list(cached["allc"])
             side_sign = 1 if candidate["side"] == "CALL" else -1
             strategy = candidate["strategy"]
-            score = 0.82 if strategy in ("MOMENTUM_ORB", "MOMENTUM_EXPLOSION") else 1.0
+            score = (float(candidate["v2_candidate"].score) / 100.0
+                     if strategy == "V2_ENGINE" else
+                     0.82 if strategy in ("MOMENTUM_ORB", "MOMENTUM_EXPLOSION") else 1.0)
             vote_name = {"MOMENTUM_ORB": "MOMENTUM_ORB",
                          "MOMENTUM_EXPLOSION": "MOMENTUM_EXPLOSION",
                          "V7_SEQUENTIAL": "V7_SEQUENTIAL", "NORMAL_TREND": "NORMAL_TREND",
-                         "SIMPLE_TREND": "SIMPLE_TREND"}[strategy]
+                         "SIMPLE_TREND": "SIMPLE_TREND", "V2_ENGINE": "V2_ENGINE"}[strategy]
             vote = Vote(vote_name, side_sign * score, candidate["reason"])
             v7_decision = None
             if strategy == "V7_SEQUENTIAL":
@@ -526,7 +577,9 @@ class Scanner:
                     metrics={**(candidate.get("metrics") or {}), "setup_type": "LIVE_INTRABAR_CONTINUATION",
                              "ema_cross_bars": 0, "vwap_mode": "closed-session-vwap",
                              "live_trigger": candidate["reason"]})
-            entry = {k: v for k, v in candidate.items() if k != "bar"}
+            entry = (dict(candidate.get("entry_candidate") or {})
+                     if strategy == "V2_ENGINE" else
+                     {k: v for k, v in candidate.items() if k != "bar"})
             entry["mode"] = "INTRABAR"
             entry["timeframe"] = "5m-intrabar"
             item = {"u": und, "ps": side_sign * score, "votes": [vote],
@@ -534,7 +587,9 @@ class Scanner:
                     "fut": cached.get("fut") or [],
                     "v7_decision": v7_decision,
                     "momentum_orb_metrics": candidate.get("metrics") or {}, "normal_metrics": candidate.get("metrics") or {},
-                    "entry_candidate": entry}
+                    "entry_candidate": entry,
+                    "v2_candidate": candidate.get("v2_candidate"),
+                    "v2_decision": candidate.get("v2_decision")}
             expiry = pick_expiry(self.master, und, now.date())
             if not expiry:
                 self._reject("no eligible expiry", und.name, "live trigger")
