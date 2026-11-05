@@ -141,3 +141,18 @@ def test_signal_alert_reports_outbox_enqueue_failure():
     assert delivered is False
     scanner._note_symbol.assert_called_once()
     scanner._deliver_pending_outbox.assert_not_called()
+
+
+def test_normal_15m_context_requires_matching_bullish_or_bearish_direction():
+    matches = scanner_module._normal_15m_context_matches
+
+    assert matches("CALL", 1) is True
+    assert matches("CALL", -1) is False
+    assert matches("CALL", 0) is False
+
+    assert matches("PUT", -1) is True
+    assert matches("PUT", 1) is False
+    assert matches("PUT", 0) is False
+
+    assert matches("UNKNOWN", 1) is False
+
