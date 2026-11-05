@@ -132,6 +132,7 @@ class Config:
     if ALERT_SCORE_MIN > 10.0:
         raise ValueError("ALERT_SCORE_MIN must not exceed 10")
     PRICE_MIN_SCORE = 72.0  # legacy price-strategy compatibility value; not a live candidate/alert gate
+    CANDIDATE_MIN_PRICE_SCORE = 0.0  # active compatibility threshold; real setup votes are still required
     MIN_CONFIDENCE = 80.0  # LEGACY: only used by scorer.evaluate()/combine(), which the live scanner no longer calls
     CHOP_PENALTY = 0.92
     EXPIRY_DAY_PENALTY = 0.95
@@ -155,6 +156,7 @@ class Config:
     CHAIN_ATM_STRIKES = _env("CHAIN_ATM_STRIKES", 2, int)            # strikes each side of ATM to validate
     CHAIN_MAX_MISSING_QUOTE_FRAC = _env("CHAIN_MAX_MISSING_QUOTE_FRAC", 0.4, float)
     STAGE1_MIN_SCORE = 0.0  # no separate candidate score threshold
+    EARLY_ENABLED = False  # safety switch: provisional previews are not published as alerts
     # Signal modules are enabled by default but remain independently configurable. Every alert still passes the shared confirmation, score, chop, timing, risk and duplicate gates.
     # Counter-trend reversal has stricter stretch/RSI/structure requirements inside score_reversal().
     ORB_ENABLED = _env("ORB_ENABLED", True, _bool)
@@ -324,6 +326,17 @@ class Config:
     TRACK_INTERVAL_SEC = 4
     REST_PREMIUM_REFRESH_SEC = 20
 
+
+    # Correlation labels remain descriptive metadata only; they do not limit signal publication.
+    GROUPS = {
+        "BANK": ["BANKNIFTY", "HDFCBANK", "ICICIBANK", "SBIN", "AXISBANK", "KOTAKBANK", "INDUSINDBK", "BANDHANBNK",
+                 "FEDERALBNK", "IDFCFIRSTB", "PNB", "BANKBARODA", "AUBANK"],
+        "IT": ["TCS", "INFY", "WIPRO", "HCLTECH", "TECHM", "LTIM", "PERSISTENT", "COFORGE", "MPHASIS"],
+        "AUTO": ["MARUTI", "TATAMOTORS", "M&M", "BAJAJ-AUTO", "EICHERMOT", "HEROMOTOCO", "TVSMOTOR", "ASHOKLEY"],
+        "METAL": ["TATASTEEL", "JSWSTEEL", "HINDALCO", "VEDL", "JINDALSTEL", "SAIL", "NMDC"],
+        "ENERGY": ["RELIANCE", "ONGC", "BPCL", "IOC", "GAIL", "NTPC", "POWERGRID", "COALINDIA"],
+        "FIN": ["FINNIFTY", "BAJFINANCE", "BAJAJFINSV", "HDFCLIFE", "SBILIFE", "CHOLAFIN", "SHRIRAMFIN"],
+    }
 
     UPSTOX_VIX_KEY = "NSE_INDEX|India VIX"
     DHAN_VIX_ID = 21
