@@ -343,12 +343,20 @@ def invalidation_distance(side: str, session: List[Candle], allc: List[Candle], 
             return 0.0
         level = float(vw_values[-1])
     elif kind in ("SIMPLE_TREND", "NORMAL_TREND"):
-        # Anchor Normal continuation risk to the recent completed 5m swing,
-        # excluding the trigger candle itself; STOP_BUFFER_ATR adds the noise margin.
+        # Include the recent completed 5m swing, but use the nearest valid
+        # invalidation reference among swing / EMA9 / session VWAP. This keeps
+        # the stop structural without letting a distant swing alone veto a setup.
         swing = allc[-6:-1] if len(allc) >= 6 else allc[:-1]
         if not swing:
             swing = recent
-        level = min(float(c.l) for c in swing) if sgn > 0 else max(float(c.h) for c in swing)
+        swing_level = min(float(c.l) for c in swing) if sgn > 0 else max(float(c.h) for c in swing)
+        e9_values = ema([c.c for c in allc], cfg.EMA_FAST)
+        vw_values = vwap(session)
+        candidates = [float(x) for x in (
+            swing_level, e9_values[-1] if e9_values else 0.0,
+            vw_values[-1] if vw_values else 0.0,
+        ) if x > 0 and (x < spot if sgn > 0 else x > spot)]
+        level = (max(candidates) if sgn > 0 else min(candidates)) if candidates else swing_level
     else:
         # Select the nearest valid support/resistance behind the entry, not simply
         # max(EMA21, VWAP), which can select a level on the wrong side of price.
