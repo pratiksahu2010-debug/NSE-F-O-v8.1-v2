@@ -7,9 +7,8 @@ Examples:
 This is a closed-bar UNDERLYING replay, not an option-premium backtest. It cannot model
 intrabar tick previews, historical option-chain liquidity/Greeks, option spread, theta,
 IV changes, brokerage or slippage. Index spot volume is treated as unavailable unless
-a reliable futures-volume series is separately supplied. It does model the portfolio
-signal caps and same-candle strategy conflict resolver. Stop is assumed first if stop
-and target are touched in the same candle.
+a reliable futures-volume series is separately supplied. It models the same-candle strategy conflict resolver, without portfolio-wide signal caps.
+Stop is assumed first if stop and target are touched in the same candle.
 """
 from __future__ import annotations
 
@@ -147,68 +146,6 @@ def replay_symbol(name, kind, candles, start, end, engine_config):
     return rows
 
 
-def correlation_group(symbol):
-    for group, members in cfg.GROUPS.items():
-        if symbol.upper() in {str(member).upper() for member in members}:
-            return group
-    return symbol.upper()
-
-
-def apply_portfolio_limits(rows):
-    """Apply the live daily caps in chronological order across the full universe."""
-    active = []
-    accepted = []
-    rejected = defaultdict(int)
-    signals_by_day = defaultdict(int)
-    losses_by_day = defaultdict(int)
-    stopped_sides = set()
-    last_signal_at = {}
-    rows = sorted(rows, key=lambda x: (x["signal_ts"], -x["score"], x["symbol"]))
-
-    for row in rows:
-        signal_time = datetime.fromisoformat(row["signal_ts"])
-        day = row["day"]
-        still_active = []
-        for item in active:
-            if item["exit_ts"] and datetime.fromisoformat(item["exit_ts"]) <= signal_time:
-                if item["r"] < 0:
-                    losses_by_day[item["day"]] += 1
-                if item["exit"] == "SL" and item["r"] < 0:
-                    stopped_sides.add((item["day"], item["symbol"], item["side"]))
-            else:
-                still_active.append(item)
-        active = still_active
-
-        if losses_by_day[day] >= int(cfg.MAX_DAILY_LOSSES):
-            rejected["daily_loss_circuit_breaker"] += 1
-            continue
-        if signals_by_day[day] >= int(cfg.DAILY_SIGNAL_CAP):
-            rejected["daily_signal_cap_reached"] += 1
-            continue
-        if len(active) >= int(cfg.MAX_ACTIVE):
-            rejected["maximum_active_signals_reached"] += 1
-            continue
-        group = correlation_group(row["symbol"])
-        if sum(1 for item in active if correlation_group(item["symbol"]) == group) >= int(cfg.MAX_PER_GROUP):
-            rejected["correlation_group_capacity_reached"] += 1
-            continue
-        if any(item["symbol"] == row["symbol"] for item in active):
-            rejected["active_underlying_signal"] += 1
-            continue
-        if cfg.BLOCK_SAME_SIDE_AFTER_LOSS and (day, row["symbol"], row["side"]) in stopped_sides:
-            rejected["same_side_blocked_after_stop_loss"] += 1
-            continue
-        previous = last_signal_at.get(row["symbol"])
-        if previous and (signal_time - previous).total_seconds() < int(cfg.SYMBOL_COOLDOWN_MIN) * 60:
-            rejected["symbol_cooldown_active"] += 1
-            continue
-
-        signals_by_day[day] += 1
-        last_signal_at[row["symbol"]] = signal_time
-        active.append(row)
-        accepted.append(row)
-    return accepted, dict(rejected)
-
 
 def report(title, rows, key):
     buckets = defaultdict(list)
@@ -278,11 +215,8 @@ def main(argv=None):
     for symbol, candles in sources.items():
         kind = "INDEX" if symbol.upper() in index_names else "STOCK"
         raw_rows.extend(replay_symbol(symbol, kind, candles, start, end, engine_config))
-    rows, rejected = apply_portfolio_limits(raw_rows)
-    print(f"Raw strategy candidates: {len(raw_rows)} | portfolio accepted: {len(rows)} | "
-          f"portfolio rejections: {sum(rejected.values())}")
-    for reason, count in sorted(rejected.items(), key=lambda item: -item[1]):
-        print(f"  reject {reason}: {count}")
+    rows = raw_rows
+    print(f"Qualifying strategy candidates (no portfolio caps): {len(rows)}")
 
     if args.train_frac and rows and not 0.0 < args.train_frac < 1.0:
         parser.error("--train-frac must be greater than 0 and less than 1")
