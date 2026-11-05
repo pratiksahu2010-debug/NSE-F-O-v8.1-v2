@@ -116,6 +116,12 @@ def _stage1_fetch_results(pool, symbols, fetcher, timeout_seconds):
         yield symbol, (None, None), "timeout"
 
 
+def _normal_15m_context_matches(side: str, htf: int) -> bool:
+    """Normal entries require completed 15m trend context in the trade direction."""
+    expected = 1 if str(side).upper() == "CALL" else -1 if str(side).upper() == "PUT" else 0
+    return expected != 0 and int(htf or 0) == expected
+
+
 def fresh_reference(earlier: Optional[dict], now: datetime) -> Optional[dict]:
     """An OI snapshot is only a valid "~30 minutes ago" reference if it is from today and not older than
     OI_REF_MAX_AGE_MIN. Snapshots are only written for symbols that reached stage 2, so the latest one can easily be
@@ -1395,8 +1401,19 @@ class Scanner:
                         reasons=[entry_reason], now=now)
             return self._reject(entry_reason, u.name, str(entry_metrics))
 
-        # --- 15m trend of the underlying (and of NIFTY for stocks) ---
+        # --- 15m trend context ---
         htf = htf_bias(c["allc"], cfg.HTF_MINUTES)
+        is_normal_context_setup = any(
+            getattr(v, "name", "") in {"SIMPLE_TREND", "NORMAL_TREND"}
+            for v in c.get("votes", [])
+        )
+        if is_normal_context_setup and not _normal_15m_context_matches(side_hint, htf):
+            required_context = "bullish" if side_hint == "CALL" else "bearish"
+            actual_context = "bullish" if htf == 1 else "bearish" if htf == -1 else "neutral/unknown"
+            detail = f"Normal {side_hint} requires completed 15m {required_context} context; current 15m context is {actual_context}"
+            self._watch(u.name, side_hint, entry_bar.ts, c["ps"], "INVALIDATED",
+                        reasons=[detail], now=now)
+            return self._reject("15m normal context mismatch", u.name, detail)
         # 15m session VWAP is supporting score evidence only. Use today's closed
         # 5m session candles; the helper drops any incomplete 15m aggregate.
         htf_vwap = htf_vwap_bias(c["session"], cfg.HTF_MINUTES)
@@ -1516,7 +1533,7 @@ class Scanner:
                 f"Independent Normal Trend {normal_metrics.get('setup_type', 'CONFIRMED_SETUP')}: EMA9/21, MACD(12/26/9), session VWAP, RSI(14), ADX(14) with directional DI",
                 str(c["votes"][0].reason),
                 f"ADX {normal_metrics.get('adx', 0):.1f}; +DI {normal_metrics.get('plus_di', 0):.1f}; -DI {normal_metrics.get('minus_di', 0):.1f}; RSI {normal_metrics.get('rsi', 0):.1f}; MACD histogram {normal_metrics.get('macd_histogram', 0):.4f}",
-                "15-minute chart is informational context only",
+                f"15-minute context aligned: {'bullish' if htf == 1 else 'bearish'}",
             ]
             score_rejects = []
             extra, extra_note = 0.0, "not applied: normal trend engine is authoritative"
