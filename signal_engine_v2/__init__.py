@@ -10,3 +10,6 @@ __all__ = ["EngineConfig", "Candidate", "Candle", "MarketSnapshot", "SignalDecis
 
 from .strategies import default_strategies
 __all__.append("default_strategies")
+
+from .runtime import create_engine, evaluate_snapshot, evaluate_legacy_candles
+__all__.extend(["create_engine", "evaluate_snapshot", "evaluate_legacy_candles"])
