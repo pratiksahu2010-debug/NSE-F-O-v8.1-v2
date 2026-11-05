@@ -127,3 +127,49 @@ def test_engine_config_cannot_lower_adx_floor():
     import pytest
     with pytest.raises(ValueError, match="cannot be lower"):
         EngineConfig(min_adx=21.0)
+
+
+def test_impulse_direction_does_not_confuse_bearish_expansion_with_bullish():
+    from types import SimpleNamespace
+    from signal_engine_v2.impulse_detector import detect_impulse
+
+    candle = SimpleNamespace(open=105.0, high=106.0, low=99.0, close=100.0)
+    values = {
+        "atr_14": 3.0, "rvol_20": 2.0, "adx_14": 28.0,
+        "adx_slope_3": 3.0, "ema_9": 101.0, "ema_21": 104.0,
+        "macd_hist": -1.2, "macd_hist_prev": -0.5,
+        "plus_di": 12.0, "minus_di": 32.0,
+    }
+    result = detect_impulse(values, candle)
+    assert result["impulse_score"] >= 4.0
+    assert result["impulse_direction"] == -1
+    assert result["directional_impulse_score"] >= 3.0
+
+
+def test_bullish_impulse_is_not_rewarded_for_put_candidate():
+    from signal_engine_v2.scorer import score_candidate
+
+    snap = snapshot()
+    snap = replace(snap, metadata={
+        **snap.metadata, "impulse_direction": 1,
+        "directional_impulse_score": 5.0,
+    })
+    put = candidate(side=Side.PUT, score=80)
+    scored, breakdown = score_candidate(put, snap)
+    assert breakdown.setup_quality == 20.0
+    assert scored.metadata["impulse_direction"] == 1
+
+
+def test_deduplication_state_resets_on_new_trading_date():
+    pipe = SignalPipeline([FixedStrategy("momentum", [candidate()])])
+    first = snapshot()
+    assert any(x.state is DecisionState.CONFIRMED for x in pipe.evaluate(first))
+    next_day_bar = replace(first.candle, timestamp=first.candle.timestamp + timedelta(days=1))
+    next_day_history = tuple(
+        replace(bar, timestamp=bar.timestamp + timedelta(days=1))
+        for bar in first.candles
+    )
+    next_day = replace(first, candle=next_day_bar, candles=next_day_history)
+    next_day_candidate = replace(candidate(), candle_timestamp=next_day_bar.timestamp)
+    pipe.strategies = (FixedStrategy("momentum", [next_day_candidate]),)
+    assert any(x.state is DecisionState.CONFIRMED for x in pipe.evaluate(next_day))
