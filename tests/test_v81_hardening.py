@@ -49,7 +49,8 @@ class TestErrorIsolation(_Base):
 
     def test_rule_crash_is_counted_and_skipped(self):
         sc, tg, tracker, now, _ = build(1)
-        with patch.object(sc, "_simple_candidate", side_effect=RuntimeError("bad candle")):
+        with patch.object(cfg, "STRATEGY_MODE", "SIMPLE"), \\
+             patch.object(sc, "_simple_candidate", side_effect=RuntimeError("bad candle")):
             out = sc.run_once(now)
         self.assertEqual(out, [])
         self.assertEqual(sc._stage1_diagnostics["evaluation_errors"], 1)
