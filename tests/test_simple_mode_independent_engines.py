@@ -272,5 +272,6 @@ def test_simple_structural_stop_includes_live_trigger_bar_extreme():
         put_distance = price.invalidation_distance(
             "PUT", candles, candles, 80.0, "SIMPLE_TREND", trigger_bar=live_put)
 
-    assert call_distance == 1.0
-    assert put_distance == 1.0
+    # STOP_BUFFER_ATR (0.25) is added beyond the selected live wick.
+    assert call_distance == 1.25
+    assert put_distance == 1.25
