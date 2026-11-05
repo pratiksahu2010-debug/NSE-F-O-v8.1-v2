@@ -39,9 +39,11 @@ def build_signal(candidate: Candidate, selection: ContractSelection, chain,
     )
     if not valid:
         return None, validation_reason
+    required_rr = (min_target_rr if min_target_rr is not None
+                    else validation_metrics.get("remaining_rr", candidate.risk_reward))
     levels = build_option_risk_levels(
         selection, candidate.side.value, current_underlying_price, candidate.stop,
-        atr_value, min_target_rr=min_target_rr
+        atr_value, min_target_rr=required_rr
     )
     if not levels:
         return None, "option_risk_levels_invalid"
