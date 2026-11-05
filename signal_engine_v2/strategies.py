@@ -61,6 +61,16 @@ def _candidate(snapshot, name, priority, side, score, reasons, structural=None, 
     )
 
 
+def _body_fraction(candle):
+    width = candle.high - candle.low
+    return abs(candle.close - candle.open) / width if width > 0 else 0.0
+
+
+def _close_position(candle):
+    width = candle.high - candle.low
+    return (candle.close - candle.low) / width if width > 0 else 0.5
+
+
 def _volume_bonus(snapshot, threshold=1.25):
     rvol = _ind(snapshot, "rvol_20")
     if rvol is None:
@@ -81,8 +91,8 @@ class BigMomentum(Strategy):
         if None in (e9, e21, e50, vwap, adxv, pdi, ndi, rsi):
             return []
         vol_score, vol_reason = _volume_bonus(s, 1.15)
-        body = _ind(s, "candle_body_fraction", 0.0) or 0.0
-        pos = _ind(s, "candle_close_position", 0.5) or 0.5
+        body = _body_fraction(c)
+        pos = _close_position(c)
         hist = _ind(s, "macd_hist")
         out = []
         for side, trend, strength, momentum, location in (
@@ -118,7 +128,7 @@ class OpeningRangeBreakout(Strategy):
         if not atrv or not vwap:
             return []
         vol_score, vol_reason = _volume_bonus(s, 1.1)
-        body = _ind(s, "candle_body_fraction", 0) or 0
+        body = _body_fraction(s.candle)
         out = []
         if s.candle.close > hi and s.candle.close > vwap and body >= .45 and s.candle.close > s.candle.open:
             score = 66 + min(10, max(0, adxv - 15) * .4) + max(0, vol_score) + body * 7
@@ -303,7 +313,7 @@ class FailedBreakoutSweep(Strategy):
         hi, lo = max(b.high for b in bars[-20:]), min(b.low for b in bars[-20:])
         c = s.candle
         body = _ind(s, "candle_body_fraction", 0) or 0
-        close_pos = _ind(s, "candle_close_position", .5) or .5
+        close_pos = _close_position(s.candle)
         out = []
         if c.low < lo and c.close > lo and close_pos >= .65 and c.close > c.open and rsi < 65:
             x = _candidate(s, self.name, self.priority, Side.CALL, 74,
