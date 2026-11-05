@@ -1,5 +1,6 @@
 """Three-stage funnel: (1) cheap spot scan -> (2) OI/chain enrichment -> (3) score, pick contract, risk, alert."""
 import logging
+import math
 import threading
 import time
 from types import SimpleNamespace
@@ -12,7 +13,8 @@ from data import events
 from data.instruments import Master
 from indicators.core import atr, htf_bias, htf_vwap_bias, iv_rank as calc_iv_rank, with_volume
 from models import Candle, Signal, Underlying, Vote
-from strategies.price import all_setups, invalidation_distance, price_diagnose, price_score, price_votes, strategy_of
+from strategies.price import (all_setups, invalidation_distance, nearest_structure_obstacle,
+                              price_diagnose, price_score, price_votes, strategy_of)
 from strategies.regime import regime as calc_regime
 from engine import context as ctx, scorer
 from engine.chain_quality import chain_quality_issues
@@ -1588,6 +1590,31 @@ class Scanner:
         if not lv or float(lv.get("rr", 0.0)) < float(cfg.MIN_RR_T1):
             self._watch(u.name, side, entry_bar.ts, c["ps"], "INVALIDATED", score_10, score_reasons + ["risk/reward validation failed"], now)
             return self._reject("risk levels rejected", u.name, side)
+        # A repeated swing level immediately ahead of price can cap the realistic
+        # first target. Reduce T1 to just before that obstacle, or reject only
+        # when the remaining structural reward no longer meets the existing RR.
+        obstacle = nearest_structure_obstacle(side, c["allc"], spot)
+        if obstacle is not None:
+            obstacle_target = float(obstacle) - sgn * (0.10 * a5)
+            current_target = float(lv.get("und_t1") or 0.0)
+            before_target = (spot < obstacle < current_target) if sgn > 0 else (current_target < obstacle < spot)
+            if before_target:
+                structural_risk = (spot - float(lv["und_sl"])) * sgn
+                structural_reward = (obstacle_target - spot) * sgn
+                obstacle_rr = structural_reward / structural_risk if structural_risk > 0 else 0.0
+                if structural_reward <= 0 or obstacle_rr < float(cfg.MIN_RR_T1):
+                    detail = (f"nearby {'resistance' if sgn > 0 else 'support'} at {obstacle:.2f} "
+                              f"leaves RR {obstacle_rr:.2f} below {float(cfg.MIN_RR_T1):.2f}")
+                    self._watch(u.name, side, entry_bar.ts, c["ps"], "INVALIDATED",
+                                score_10, score_reasons + [detail], now)
+                    return self._reject("nearby structure blocks target", u.name, detail)
+                lv["und_t1"] = obstacle_target
+                tick = max(0.01, float(contract.tick_size or 0.05))
+                premium_target = px + abs(float(q.delta or 0.5)) * sgn * (obstacle_target - spot)
+                lv["t1"] = math.ceil(premium_target / tick - 1e-9) * tick
+                score_reasons.append(
+                    f"first target capped before nearby {'resistance' if sgn > 0 else 'support'} {obstacle:.2f}"
+                )
         valid_structure, structure_reason, structure_metrics = validate_entry_candidate(
             entry_candidate, entry_bar, spot, a5,
             cfg.LIVE_MAX_ADVERSE_ATR, cfg.LIVE_MAX_RUNAWAY_ATR,
