@@ -123,7 +123,16 @@ class LiveIntrabarEngine:
                allow_mex: bool = True, allow_orb: bool = True,
                allow_simple: bool = False) -> Optional[dict]:
         """Return one early trigger contract, or None. No partial bar enters closed history."""
-        if len(completed_all) < max(30, int(getattr(cfg, "V7_MIN_BARS", 50))):
+        # SIMPLE needs SIMPLE_MIN_BARS (35 by default), not the legacy V7
+        # history floor (50). The old shared check delayed valid SIMPLE live
+        # entries by three 5m candles despite sufficient indicator history.
+        if allow_sequential:
+            required_history = max(30, int(getattr(cfg, "V7_MIN_BARS", 50)))
+        elif allow_simple:
+            required_history = max(30, int(getattr(cfg, "SIMPLE_MIN_BARS", 35)))
+        else:
+            required_history = 35  # MEX/ORB indicator warm-up
+        if len(completed_all) < required_history:
             return None
         if not completed_session or partial.ts.date() != now.date():
             return None
