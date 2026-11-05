@@ -60,6 +60,15 @@ def build_signal(candidate: Candidate, selection: ContractSelection, chain,
     max_loss = max(0.0, entry - sl) * lot
     score_details = candidate.metadata.get("score_breakdown", {})
     reasons = list(candidate.reasons)
+    move_potential = str(candidate.metadata.get("move_potential", "NORMAL")).upper()
+    if move_potential in {"STRONG", "EXPLOSIVE"}:
+        reasons.append(f"Move-potential context: {move_potential}")
+    if candidate.metadata.get("impulse_direction") in (-1, 1):
+        direction_label = "BULLISH" if candidate.metadata.get("impulse_direction") == 1 else "BEARISH"
+        reasons.append(
+            f"Impulse direction: {direction_label} "
+            f"(score {candidate.metadata.get('directional_impulse_score', 0)})"
+        )
     if score_details:
         reasons.append("Unified score components: " + ", ".join(
             f"{key}={value}" for key, value in score_details.items() if key != "total"

@@ -54,8 +54,8 @@ def _v(snapshot, key):
 def score_candidate(candidate: Candidate, snapshot: MarketSnapshot):
     side = candidate.side
     bull = side is Side.CALL
+    wanted_direction = 1 if bull else -1
     c = snapshot.candle
-    i = snapshot.indicators
 
     # Pattern-specific detector has already enforced the setup trigger.
     setup = max(0.0, min(20.0, (candidate.score - 60.0) * 0.8))
@@ -104,14 +104,29 @@ def score_candidate(candidate: Candidate, snapshot: MarketSnapshot):
     # Relative strength confirms leadership but is not a mandatory gate.
     rs = _v(snapshot, "relative_strength_vs_index")
     rs_bonus = 5.0 if rs is not None and ((rs > 0) if bull else (rs < 0)) else 0.0
-    impulse = _v(snapshot, "impulse_score")
-    impulse_bonus = max(0.0, min(5.0, impulse or 0.0))
+
+    # Expansion can be large in either direction. Only reward it when its
+    # directional votes agree with this candidate.
+    impulse_direction = snapshot.metadata.get("impulse_direction", 0)
+    try:
+        impulse_direction = int(impulse_direction)
+    except (TypeError, ValueError):
+        impulse_direction = 0
+    directional_impulse = snapshot.metadata.get("directional_impulse_score", 0.0)
+    try:
+        directional_impulse = float(directional_impulse)
+    except (TypeError, ValueError):
+        directional_impulse = 0.0
+    impulse_bonus = (
+        max(0.0, min(5.0, directional_impulse))
+        if impulse_direction == wanted_direction else 0.0
+    )
+
     regime = str(snapshot.metadata.get("market_regime", "UNKNOWN")).upper()
     trend_regime = "TRENDING_UP" if bull else "TRENDING_DOWN"
     regime_bonus = 2.0 if regime in {trend_regime, "VOLATILITY_EXPANSION"} else 0.0
     htf = snapshot.metadata.get("htf_bias")
-    wanted = 1 if bull else -1
-    htf_score = 10.0 if htf == wanted else (0.0 if htf == -wanted else 5.0)
+    htf_score = 10.0 if htf == wanted_direction else (0.0 if htf == -wanted_direction else 5.0)
 
     width = c.high - c.low
     body = abs(c.close - c.open) / width if width > 0 else 0.0
@@ -134,7 +149,17 @@ def score_candidate(candidate: Candidate, snapshot: MarketSnapshot):
     breakdown = ScoreBreakdown(setup, trend, vwap_score, adx_score, volume_score,
                                momentum, htf_score, candle_score, volatility)
     grade = "A+" if breakdown.total >= 85 else "A" if breakdown.total >= 75 else "B" if breakdown.total >= 65 else "REJECT"
+    analytics = {
+        "market_regime": regime,
+        "move_potential": str(snapshot.metadata.get("move_potential", "NORMAL")),
+        "impulse_score": _v(snapshot, "impulse_score") or 0.0,
+        "impulse_direction": impulse_direction,
+        "directional_impulse_score": directional_impulse,
+        "impulse_tags": tuple(snapshot.metadata.get("impulse_tags", ())),
+        "relative_strength_vs_index": rs,
+    }
     enriched = replace(candidate, score=breakdown.total,
-                       metadata={**dict(candidate.metadata), "score_breakdown": breakdown.as_dict(),
+                       metadata={**dict(candidate.metadata), **analytics,
+                                 "score_breakdown": breakdown.as_dict(),
                                  "strategy_raw_score": candidate.score, "grade": grade})
     return enriched, breakdown

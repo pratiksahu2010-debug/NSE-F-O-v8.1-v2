@@ -17,7 +17,6 @@ class TestPr19Pr20Regressions(unittest.TestCase):
     def test_v7_contract_selection_does_not_reject_estimated_spread_cost(self):
         # V7 still requires a valid executable bid/ask, OI, volume and delta;
         # estimated spread percentage is not an additional approval gate.
-        self.assertFalse(cfg.SPREAD_GATE_ENABLED)
         master = Master(master_rows())
         underlying = next(u for u in build_underlyings(master, TODAY) if u.name == "NIFTY")
         now = datetime(2026, 10, 15, 10, 30, tzinfo=IST)

@@ -1024,7 +1024,6 @@ class Scanner:
             # Independent strategy detectors run regardless of Normal mode.
             mex_result = self.mex.scan(u.name, session, allc)
             mex_sgn, mex_score = mex_result.get("sgn"), mex_result.get("score")
-            mex_state, mex_live = mex_result.get("state"), mex_result.get("live") or {}
             orb_result = self.momentum_orb.scan(u.name, session, allc)
             orb_vote = None
             if orb_result.get("confirmed_now"):
@@ -1032,12 +1031,9 @@ class Scanner:
                 orb_vote = Vote("MOMENTUM_ORB", orb_side * min(1.0, float(orb_result["score"]) / 100.0), str(orb_result["reason"]))
                 counts["momentum_orb_confirmed"] = counts.get("momentum_orb_confirmed", 0) + 1
             mex_vote = None
-            if mex_sgn in (1, -1) and (mex_state == "CONFIRMED" or not cfg.MEX_LIFECYCLE_ENABLED):
+            if mex_sgn in (1, -1):
                 mex_vote = Vote("MOMENTUM_EXPLOSION", int(mex_sgn) * min(1.0, float(mex_score or 0.0) / 100.0), str(mex_result.get("reason") or "Momentum expansion"))
                 counts["mex_confirmed"] = counts.get("mex_confirmed", 0) + 1
-            elif mex_sgn in (1, -1):
-                counts["mex_awaiting_confirmation"] = counts.get("mex_awaiting_confirmation", 0) + 1
-                self._note_symbol(u.name, "mex", "optional lifecycle pending", f"state={mex_state}")
             normal_vote = None
             if int(normal_result.get("side") or 0) in (1, -1):
                 normal_name = "SIMPLE_TREND" if cfg.STRATEGY_MODE != "LEGACY" else "NORMAL_TREND"
@@ -1096,13 +1092,13 @@ class Scanner:
                     confirmation_time = orb_result.get("confirmed_bar")
                 elif mex_vote is not None:
                     strategy_name = "MOMENTUM_EXPLOSION"
-                    setup_time = mex_live.get("setup_bar") or mex_live.get("bar") or latest_bar.ts.isoformat()
-                    trigger_time = mex_live.get("confirmed_bar") or latest_bar.ts.isoformat()
+                    setup_time = latest_bar.ts.isoformat()
+                    trigger_time = latest_bar.ts.isoformat()
                     confirmation_time = trigger_time
                 elif selected_engine == "MOMENTUM_EXPLOSION":
                     strategy_name = "MOMENTUM_EXPLOSION"
-                    setup_time = mex_live.get("setup_bar") or latest_bar.ts.isoformat()
-                    trigger_time = mex_live.get("confirmed_bar") or latest_bar.ts.isoformat()
+                    setup_time = latest_bar.ts.isoformat()
+                    trigger_time = latest_bar.ts.isoformat()
                     confirmation_time = trigger_time
                 elif selected_engine == "SIMPLE_TREND":
                     strategy_name = "SIMPLE_TREND"

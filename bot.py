@@ -29,17 +29,6 @@ from strategies.normal_universe import NORMAL_SYMBOLS
 log = logging.getLogger("bot")
 
 
-def select_bounded_universe(indices, stocks, ranked_names, priority_names, max_symbols: int):
-    """Return indices plus turnover-ranked/eligible priority stocks, bounded by one total cap."""
-    cap = max(0, int(max_symbols))
-    selected_indices = list(indices)[:cap]
-    stock_capacity = max(0, cap - len(selected_indices))
-    by_name = {u.name: u for u in stocks}
-    ordered = list(dict.fromkeys(list(ranked_names) + list(priority_names)))
-    selected_stocks = [by_name[name] for name in ordered if name in by_name][:stock_capacity]
-    return selected_indices + selected_stocks
-
-
 class Bot:
     def __init__(self):
         self.tg = Telegram()
@@ -69,7 +58,7 @@ class Bot:
         self.summary_day = None
         self.started = False
         self.master = None
-        self.universe_diagnostics = {"priority_requested": list(cfg.PRIORITY_STOCKS), "priority_in_master": [], "priority_missing_from_master": []}
+        self.universe_diagnostics = {"mode": "not_bootstrapped", "unique_stock_union": []}
         self.history_bootstrap_diagnostics = {"status": "not_started", "symbols": 0, "from_cache": 0,
                                               "from_upstox": 0, "cache_fallback": 0, "cache_write_failed": 0, "failed": 0,
                                               "short_history": 0, "min_bars": 0, "max_bars": 0,

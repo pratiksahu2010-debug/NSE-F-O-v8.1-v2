@@ -34,10 +34,6 @@ def liquidity_ok(q: OptionQuote, und: Underlying, lot: int) -> Tuple[bool, str]:
         return False, f"premium {q.ltp:.2f} < {cfg.MIN_PREMIUM}"
     if q.bid <= 0 or q.ask <= 0 or q.ask < q.bid:
         return False, "missing or crossed executable bid/ask"
-    spread_pct = (q.ask - q.bid) / q.ltp * 100.0 if q.ltp > 0 else float("inf")
-    spread_limit = cfg.MAX_SPREAD_PCT if und.kind == "INDEX" else cfg.MAX_SPREAD_PCT_STOCK
-    if cfg.SPREAD_GATE_ENABLED and spread_pct >= float(spread_limit):
-        return False, f"bid-ask spread {spread_pct:.2f}% >= {spread_limit:.2f}%"
     if q.oi / lot < cfg.MIN_OI_LOTS[und.kind]:
         return False, f"OI {q.oi / lot:.0f} lots"
     if q.volume / lot < cfg.MIN_VOLUME_LOTS[und.kind]:

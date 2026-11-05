@@ -1,12 +1,11 @@
 """Dedicated fixed-universe Momentum Explosion scanner.
 
-Detection and optional persistence lifecycle are separate. With lifecycle disabled,
-a fresh MEI trigger is actionable on the same candle; no following candle is required.
+A valid MEI trigger is actionable on its detection candle; no dormant next-bar
+lifecycle or persisted candidate state is involved.
 """
 from __future__ import annotations
 
 from config import cfg
-from strategies.mex_lifecycle import MexLifecycle
 from strategies.mex_universe import MEX_SYMBOLS
 from strategies.momentum_explosion import momentum_expansion_index
 
@@ -14,7 +13,6 @@ from strategies.momentum_explosion import momentum_expansion_index
 class MomentumExplosionScanner:
     def __init__(self, db=None):
         self.universe = frozenset(MEX_SYMBOLS)
-        self.lifecycle = MexLifecycle(db)
         self.stats = {"eligible": 0, "detected": 0, "pending": 0, "confirmed": 0,
                       "invalidated": 0, "expired": 0, "no_trigger": 0,
                       "rejection_reasons": {}, "gate_failures": {}, "disabled": not cfg.MEX_ENABLED}
@@ -58,17 +56,14 @@ class MomentumExplosionScanner:
             for direction in rejected_directions.values():
                 for gate in direction.get("gate_failures", []):
                     gate_counts[gate] = gate_counts.get(gate, 0) + 1
-        state = self.lifecycle.observe(symbol, sign, all_candles[-1], score, reason)
-        if state == "CANDIDATE":
-            self.stats["pending"] += 1
-        elif state == "CONFIRMED":
+        state = "CONFIRMED" if candidate else "IDLE"
+        if candidate:
             self.stats["confirmed"] += 1
-        elif state == "INVALIDATED":
-            self.stats["invalidated"] += 1
-        elif state == "EXPIRED":
-            self.stats["expired"] += 1
         return {"eligible": True, "sgn": sign, "score": score, "reason": reason,
-                "state": state, "live": self.lifecycle.state(symbol), "metrics": metrics}
+                "state": state,
+                "live": ({"state": state, "sgn": sign, "score": score, "reason": reason}
+                         if candidate else {"state": "IDLE", "sgn": 0}),
+                "metrics": metrics}
 
     def snapshot(self) -> dict:
         return {**self.stats, "rejection_reasons": dict(self.stats["rejection_reasons"]),

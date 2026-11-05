@@ -7,7 +7,7 @@ it looks. This module adds information that is NOT derived from the signal candl
   * relative strength of a stock vs NIFTY on the day
   * trigger-candle volume vs the SAME time of day on previous days (the 20-candle average mixes open and lunch)
   * dominant option-OI wall sitting right in the trade's path
-  * index-futures OI change into the move (logged always; gate is off until calibrated)
+  * index-futures OI change into the move (diagnostic only; no uncalibrated veto)
 
 compute_features() is pure and returns a plain dict (also persisted per signal for calibration);
 veto_from() turns that dict into an optional (code, detail) rejection.
@@ -103,7 +103,4 @@ def veto_from(f: dict, kind: str, is_reversal: bool, ignore_trend_context: bool 
     d = f.get("wall_dist_atr")
     if cfg.WALL_GATE_ENABLED and f.get("wall_dominant") and d is not None and 0 <= d <= cfg.WALL_MIN_ATR:
         return "into OI wall", f"dominant wall {f['wall_strike']:g} only {d:.2f} ATR away"
-    oi = f.get("fut_oi_chg_pct")
-    if cfg.FUT_OI_GATE_ENABLED and oi is not None and oi < cfg.FUT_OI_MIN_CHG_PCT:
-        return "futures OI falling", f"futures OI {oi:+.2f}% (short covering / weak breakout)"
     return None
