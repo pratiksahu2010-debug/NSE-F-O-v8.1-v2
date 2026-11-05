@@ -14,7 +14,7 @@ from threading import RLock
 from statistics import median
 from typing import Dict, Optional
 
-from indicators.core import adx, atr, ema, macd, rsi, vwap
+from indicators.core import adx, atr, ema, htf_bias, macd, rsi, vwap
 from models import Candle, Underlying
 from strategies.normal_trend import evaluate_normal_trend_intrabar
 from strategies.simple_signal import evaluate_simple_intrabar
@@ -324,7 +324,8 @@ class LiveIntrabarEngine:
                 fresh_bars=int(getattr(cfg, "SIMPLE_FRESH_BARS", 3)),
                 min_bars=int(getattr(cfg, "SIMPLE_MIN_BARS", 35)),
                 min_session_bars=int(getattr(cfg, "SIMPLE_MIN_SESSION_BARS", 3)),
-                max_entry_extension_atr=float(getattr(cfg, "SIMPLE_MAX_EXTENSION_ATR", 1.8)),
+                max_entry_extension_atr=float(getattr(cfg, "SIMPLE_MAX_EXTENSION_ATR", 1.5)),
+                context_15m=htf_bias(completed_all, cfg.HTF_MINUTES),
             )
             if simple_result.get("side") in (1, -1):
                 side = "CALL" if simple_result["side"] > 0 else "PUT"
