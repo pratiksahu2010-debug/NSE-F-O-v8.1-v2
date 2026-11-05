@@ -17,6 +17,7 @@ class EngineConfig:
     conflict_score_margin: float = 8.0
     require_valid_stop: bool = True
     require_closed_htf: bool = True
+    unified_scoring_enabled: bool = True
 
     def __post_init__(self):
         if not 0 <= self.min_score <= 100:
