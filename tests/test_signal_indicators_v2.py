@@ -39,3 +39,8 @@ def test_missing_volume_does_not_fabricate_rvol_or_mfi():
     assert values["rvol_20"] is None
     assert values["mfi_14"] is None
     assert values["obv"] is None
+
+
+def test_rvol_20_requires_full_21_candle_window():
+    values = calculate(make_bars(10))
+    assert values["rvol_20"] is None
