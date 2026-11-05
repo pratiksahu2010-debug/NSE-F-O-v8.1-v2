@@ -103,6 +103,8 @@ def replay_symbol(name, kind, candles, start, end, engine_config):
                 continue
             current_session = session[:index + 1]
             all_bars = warm + current_session
+            if len(current_session) < int(cfg.MIN_SESSION_BARS):
+                continue
             if len(all_bars) < engine_config.min_history_bars:
                 continue
             decisions = evaluate_legacy_candles(
@@ -124,6 +126,8 @@ def replay_symbol(name, kind, candles, start, end, engine_config):
             r, exit_reason, used, exit_ts = simulate_outcome(
                 candidate.side.value, entry, stop, target1, target2, session[index + 1:]
             )
+            if exit_ts is None:
+                exit_ts = close_time
             busy_until = index + max(used, 1)
             grade = str(candidate.metadata.get("grade", "B"))
             rvol = candidate.metadata.get("score_breakdown", {}).get("relative_volume")
@@ -167,8 +171,9 @@ def apply_portfolio_limits(rows):
         still_active = []
         for item in active:
             if item["exit_ts"] and datetime.fromisoformat(item["exit_ts"]) <= signal_time:
-                if item["exit"] == "SL" and item["r"] < 0:
+                if item["r"] < 0:
                     losses_by_day[item["day"]] += 1
+                if item["exit"] == "SL" and item["r"] < 0:
                     stopped_sides.add((item["day"], item["symbol"], item["side"]))
             else:
                 still_active.append(item)
@@ -279,7 +284,9 @@ def main(argv=None):
     for reason, count in sorted(rejected.items(), key=lambda item: -item[1]):
         print(f"  reject {reason}: {count}")
 
-    if args.train_frac and rows:
+    if args.train_frac and rows and not 0.0 < args.train_frac < 1.0:
+        parser.error("--train-frac must be greater than 0 and less than 1")
+    if args.train_frac and rows and len({row["day"] for row in rows}) > 1:
         days = sorted({row["day"] for row in rows})
         cut_index = max(1, min(len(days) - 1, int(len(days) * args.train_frac)))
         cutoff = days[cut_index]
