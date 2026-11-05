@@ -235,10 +235,12 @@ def test_simple_mode_skips_normal_detector_outside_fixed_universe():
     symbol = Underlying("ABC", "STOCK", "NSE_EQ|ABC")
     scanner = _stage1_scanner(symbol, None)
 
-    with patch.object(scanner_module.cfg, "STRATEGY_MODE", "SIMPLE"), \\
-         patch.object(scanner_module.events, "symbol_event", return_value=False), \\
-         patch.object(scanner_module, "_stage1_fetch_results",
-                      return_value=iter([(symbol, ([candle], None), None)])):
+    with (
+        patch.object(scanner_module.cfg, "STRATEGY_MODE", "SIMPLE"),
+        patch.object(scanner_module.events, "symbol_event", return_value=False),
+        patch.object(scanner_module, "_stage1_fetch_results",
+                     return_value=iter([(symbol, ([candle], None), None)])),
+    ):
         candidates, hits = scanner.stage1(now)
 
     scanner._simple_candidate.assert_not_called()
