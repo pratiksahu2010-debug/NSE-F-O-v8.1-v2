@@ -103,7 +103,9 @@ def format_signal(s: Signal) -> str:
         f"<b>Signal / alert time:</b> {signal_time}",
         f"{icon} <b>{word} | {html.escape(s.underlying)}</b>  {'📝 PAPER' if cfg.PAPER_MODE else ''}",
         f"<b>Type:</b> {STRATEGY_LABEL.get(s.strategy, '📈 TREND')} | "
-        "✅ CONFIRMED — score and mandatory gates passed",
+        + ("⚠️ EARLY INTRABAR — provisional; revalidate before acting"
+           if str(getattr(s, "tier", "CONFIRMED")).upper() == "EARLY"
+           else "✅ CLOSED-BAR CONFIRMED — score and mandatory gates passed"),
         f"<b>Contract:</b> <code>{html.escape(s.contract)}</code>",
         f"<b>Expiry:</b> {s.expiry} ({s.dte}d) | <b>Strike:</b> {s.strike:g} {s.opt_type}",
         f"<b>Lot size:</b> {s.lot_size} | <b>Cost/lot:</b> ₹{_p(s.cost_lot, 0)}",
